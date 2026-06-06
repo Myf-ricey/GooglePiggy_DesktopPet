@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 - `PostToolUse` -> `thinking`
 - `Stop` -> `success`
 
-桌宠收到 `thinking` 后播放追胡萝卜；收到 `success` 后播放跳跳庆祝，再回到呼吸待机。若异常情况下没有收到结束信号，`thinking` 会在一段时间后自动过期回到待机，避免一直卡在胡萝卜。
+桌宠收到 `thinking` 后播放追胡萝卜；收到 `success` 后播放跳跳庆祝，再回到呼吸待机。新版 hook 还会在 `UserPromptSubmit` 后启动一个隐藏的轻量兜底监听器：如果 Codex 没有发出 `Stop` hook，它会读取当前用户的 `~\.codex\sessions` 本地会话记录，只在同一个 `session_id + turn_id` 出现明确的 `task_complete` 时补写 `success`，因此长任务不会被误判成完成。若本地记录也不可用，`thinking` 才会在一段时间后自动过期回到待机，避免一直卡在胡萝卜。
 
 手动测试状态桥：
 
