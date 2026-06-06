@@ -97,7 +97,7 @@ if (-not $NoCodexHooks) {
                 }
             )
         }
-        $updated = @($existing) + $newGroup
+        $updated = @($newGroup) + @($existing)
         if ($config.hooks.PSObject.Properties.Name -contains $eventName) {
             $config.hooks.$eventName = $updated
         } else {
