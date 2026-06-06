@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv-build/
+build/
+cache/
+dist/
+qa/
+pig-pet-error.log
+*.log
