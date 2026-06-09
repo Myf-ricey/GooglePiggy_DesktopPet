@@ -14,7 +14,9 @@ from pathlib import Path
 
 APP_DATA_DIR_NAME = "GifPigDesktopPet"
 STATUS_FILE_NAME = "codex-status.json"
-VALID_STATUSES = {"idle", "thinking", "success", "error"}
+HEARTBEAT_FILE_NAME = "pig-heartbeat.json"
+PERMISSION_REQUESTS_DIR_NAME = "permission-requests"
+VALID_STATUSES = {"idle", "thinking", "success", "error", "permission"}
 
 
 def default_status_path() -> Path:
@@ -22,6 +24,18 @@ def default_status_path() -> Path:
     if local_app_data:
         return Path(local_app_data) / APP_DATA_DIR_NAME / STATUS_FILE_NAME
     return Path.home() / f".{APP_DATA_DIR_NAME}" / STATUS_FILE_NAME
+
+
+def default_state_dir() -> Path:
+    return default_status_path().parent
+
+
+def default_heartbeat_path() -> Path:
+    return default_state_dir() / HEARTBEAT_FILE_NAME
+
+
+def default_permission_requests_dir() -> Path:
+    return default_state_dir() / PERMISSION_REQUESTS_DIR_NAME
 
 
 def read_status(path: Path | None = None) -> dict[str, object]:
@@ -42,6 +56,8 @@ def write_status(
     event: str = "",
     message: str = "",
     session_id: str = "",
+    turn_id: str = "",
+    permission_request_id: str = "",
     path: Path | None = None,
 ) -> Path:
     if status not in VALID_STATUSES:
@@ -56,7 +72,10 @@ def write_status(
         "event": event,
         "message": message,
         "session_id": session_id,
+        "turn_id": turn_id,
     }
+    if permission_request_id:
+        payload["permission_request_id"] = permission_request_id
     temporary_path = status_path.with_suffix(status_path.suffix + ".tmp")
     temporary_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -72,6 +91,8 @@ def main() -> None:
     parser.add_argument("--event", default="")
     parser.add_argument("--message", default="")
     parser.add_argument("--session-id", default="")
+    parser.add_argument("--turn-id", default="")
+    parser.add_argument("--permission-request-id", default="")
     parser.add_argument("--source", default="manual")
     parser.add_argument("--status-file", type=Path)
     parser.add_argument("--show", action="store_true")
@@ -93,6 +114,8 @@ def main() -> None:
         event=args.event,
         message=args.message,
         session_id=args.session_id,
+        turn_id=args.turn_id,
+        permission_request_id=args.permission_request_id,
         path=status_path,
     )
     print(status_path)

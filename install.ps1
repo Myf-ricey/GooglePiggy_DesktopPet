@@ -85,15 +85,22 @@ if (-not $NoCodexHooks) {
 
     $normalizedHookPath = $hookPath.Replace('\', '/')
     $command = '& "powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $normalizedHookPath
-    $events = @('SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop')
-    foreach ($eventName in $events) {
+    $eventTimeouts = [ordered]@{
+        SessionStart = 10
+        UserPromptSubmit = 10
+        PreToolUse = 10
+        PostToolUse = 10
+        Stop = 10
+        PermissionRequest = 600
+    }
+    foreach ($eventName in $eventTimeouts.Keys) {
         $existing = @($config.hooks.$eventName) | Where-Object { $null -ne $_ }
         $newGroup = [pscustomobject]@{
             hooks = @(
                 [pscustomobject]@{
                     type = 'command'
                     command = $command
-                    timeout = 10
+                    timeout = $eventTimeouts[$eventName]
                 }
             )
         }

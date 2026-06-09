@@ -12,6 +12,7 @@ Use this checklist before publishing a GitHub release.
   - `assets/source-gifs/flat.gif`
   - `assets/source-gifs/jump.gif`
   - `assets/source-gifs/carrot.gif`
+  - `assets/source-gifs/question.gif`
 
 ## Local Verification
 
@@ -58,3 +59,4 @@ Check:
 - Codex asks to trust the hook once after restart.
 - Thinking state plays carrot.
 - Stop state plays jump celebration and returns to idle.
+- PermissionRequest shows the question pig bubble, then allow/deny is returned to Codex.

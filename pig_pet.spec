@@ -8,6 +8,7 @@ datas = [
     (str(project_dir / "assets"), "assets"),
     (str(project_dir / "cache"), "cache"),
     (str(project_dir / "hooks"), "hooks"),
+    (str(project_dir / "tools"), "tools"),
     (str(project_dir / "README.md"), "."),
     (str(project_dir / "ASSET-NOTICE.md"), "."),
     (str(project_dir / "install.ps1"), "."),

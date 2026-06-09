@@ -21,9 +21,10 @@ def main() -> None:
     source_dir = PROJECT_DIR / "assets" / "source-gifs"
     animations = pig_pet.load_animation_cache(PROJECT_DIR / "cache", source_dir)
     assert animations is not None
-    assert set(animations) == {"idle", "left", "carrot", "jump", "flat"}
+    assert set(animations) == {"idle", "left", "carrot", "jump", "flat", "question"}
     assert animations["idle"].source == animations["flat"].source
     assert animations["left"].source.name == "left_fixed.gif"
+    assert animations["question"].source.name == "question.gif"
     assert len(animations["idle"].frames) == pig_pet.IDLE_BREATH_FRAMES
     assert set(animations["idle"].durations) == {pig_pet.IDLE_BREATH_DURATION_MS}
     assert len(animations["left"].frames) == 15
@@ -94,8 +95,35 @@ def main() -> None:
         for _ in range(len(animations["jump"].frames)):
             pet._advance()
         assert pet.current_key == "idle"
+
+        permission_dir = status_path.parent / "permission-requests"
+        permission_id = "smoke-permission"
+        pig_pet.write_json_atomic(
+            permission_dir / f"{permission_id}.request.json",
+            {
+                "request_id": permission_id,
+                "tool_name": "Shell",
+                "summary": "Run a harmless smoke-test command",
+                "created_at": pig_pet.utc_timestamp(),
+            },
+        )
+        pig_pet.write_status(
+            "permission",
+            event="PermissionRequest",
+            permission_request_id=permission_id,
+            path=status_path,
+        )
+        pet._poll_bridge(force=True)
+        assert pet.current_key == "question"
+        pet._write_permission_decision("deny")
+        assert (permission_dir / f"{permission_id}.response.json").is_file()
+        pet._poll_bridge(force=True)
+        assert pet.current_key == "idle"
     finally:
         status_path.unlink(missing_ok=True)
+        permission_dir = status_path.parent / "permission-requests"
+        for path in permission_dir.glob("smoke-permission.*.json"):
+            path.unlink(missing_ok=True)
 
     print("smoke_test=ok")
 

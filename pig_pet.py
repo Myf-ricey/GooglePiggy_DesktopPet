@@ -16,22 +16,29 @@ import traceback
 import winreg
 from ctypes import wintypes
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from codex_bridge import default_status_path, read_status, write_status
+from codex_bridge import (
+    default_heartbeat_path,
+    default_permission_requests_dir,
+    default_status_path,
+    read_status,
+    write_status,
+)
 
 
 APP_NAME = "GIF Pig Desktop Pet"
 CLASS_NAME = "GifPigDesktopPetWindow"
 AUTOSTART_VALUE_NAME = "GifPigDesktopPet"
 AUTOSTART_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-WINDOW_SIZE = 460
+WINDOW_SIZE = 640
 TARGET_BODY_WIDTH = 152
-BODY_ANCHOR_X = WINDOW_SIZE // 2
-BODY_ANCHOR_BOTTOM = 390
+BODY_ANCHOR_X = WINDOW_SIZE - 230
+BODY_ANCHOR_BOTTOM = WINDOW_SIZE - 70
 JUMP_MAX_HORIZONTAL_TRAVEL = 25
 JUMP_KEEP_INDICES = [*range(0, 26), *range(55, 90)]
 LEFT_HUMP_SPEED_MULTIPLIER = 1.5
@@ -41,11 +48,13 @@ IDLE_BREATH_FRAMES = 49
 IDLE_BREATH_DURATION_MS = 45
 IDLE_BREATH_MAX_SQUASH = 0.026
 STATUS_POLL_INTERVAL_SECONDS = 0.25
-THINKING_STATUS_STALE_SECONDS = 90.0
+THINKING_STATUS_STALE_SECONDS = 45.0
 DRAG_THRESHOLD_PIXELS = 4
 SUCCESS_EFFECT_DURATION_SECONDS = 1.35
+HEARTBEAT_INTERVAL_SECONDS = 1.0
+PERMISSION_STATUS_STALE_SECONDS = 620.0
 MIN_DURATION_MS = 20
-CACHE_VERSION = 17
+CACHE_VERSION = 21
 
 WM_DESTROY = 0x0002
 WM_TIMER = 0x0113
@@ -272,6 +281,20 @@ def default_source_dir(app_dir: Path) -> Path:
     return app_dir / "assets" / "source-gifs"
 
 
+def heartbeat_path_for_status(status_path: Path) -> Path:
+    default_state_dir = default_status_path().parent
+    if status_path.parent == default_state_dir:
+        return default_heartbeat_path()
+    return status_path.parent / "pig-heartbeat.json"
+
+
+def permission_dir_for_status(status_path: Path) -> Path:
+    default_state_dir = default_status_path().parent
+    if status_path.parent == default_state_dir:
+        return default_permission_requests_dir()
+    return status_path.parent / "permission-requests"
+
+
 def startup_command(app_dir: Path) -> str:
     if getattr(sys, "frozen", False):
         return subprocess.list2cmdline([str(Path(sys.executable).resolve())])
@@ -424,15 +447,21 @@ def largest_component(mask: np.ndarray) -> np.ndarray:
     return result
 
 
-def center_component(mask: np.ndarray) -> np.ndarray:
+def center_component(
+    mask: np.ndarray,
+    center: tuple[float, float] | None = None,
+) -> np.ndarray:
     height, width = mask.shape
     points = np.argwhere(mask)
     result = np.zeros((height, width), dtype=np.uint8)
     if points.size == 0:
         return result
 
-    center_y = (height - 1) / 2
-    center_x = (width - 1) / 2
+    if center is None:
+        center_x = (width - 1) / 2
+        center_y = (height - 1) / 2
+    else:
+        center_x, center_y = center
     distances = (points[:, 0] - center_y) ** 2 + (points[:, 1] - center_x) ** 2
     seed_y, seed_x = points[int(np.argmin(distances))]
 
@@ -450,6 +479,157 @@ def center_component(mask: np.ndarray) -> np.ndarray:
     return result
 
 
+def large_components(mask: np.ndarray, minimum_pixels: int) -> np.ndarray:
+    height, width = mask.shape
+    seen = np.zeros((height, width), dtype=bool)
+    result = np.zeros((height, width), dtype=np.uint8)
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or seen[y, x]:
+                continue
+            component: list[tuple[int, int]] = []
+            stack = [(x, y)]
+            seen[y, x] = True
+            while stack:
+                current_x, current_y = stack.pop()
+                component.append((current_x, current_y))
+                for neighbor_y in range(max(0, current_y - 1), min(height, current_y + 2)):
+                    for neighbor_x in range(max(0, current_x - 1), min(width, current_x + 2)):
+                        if mask[neighbor_y, neighbor_x] and not seen[neighbor_y, neighbor_x]:
+                            seen[neighbor_y, neighbor_x] = True
+                            stack.append((neighbor_x, neighbor_y))
+            if len(component) >= minimum_pixels:
+                for component_x, component_y in component:
+                    result[component_y, component_x] = 255
+    return result
+
+
+def large_and_detached_components(
+    mask: np.ndarray,
+    minimum_pixels: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    height, width = mask.shape
+    seen = np.zeros((height, width), dtype=bool)
+    components: list[list[tuple[int, int]]] = []
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or seen[y, x]:
+                continue
+            component: list[tuple[int, int]] = []
+            stack = [(x, y)]
+            seen[y, x] = True
+            while stack:
+                current_x, current_y = stack.pop()
+                component.append((current_x, current_y))
+                for neighbor_y in range(max(0, current_y - 1), min(height, current_y + 2)):
+                    for neighbor_x in range(max(0, current_x - 1), min(width, current_x + 2)):
+                        if mask[neighbor_y, neighbor_x] and not seen[neighbor_y, neighbor_x]:
+                            seen[neighbor_y, neighbor_x] = True
+                            stack.append((neighbor_x, neighbor_y))
+            if len(component) >= minimum_pixels:
+                components.append(component)
+
+    selected = np.zeros((height, width), dtype=np.uint8)
+    detached = np.zeros((height, width), dtype=np.uint8)
+    if not components:
+        return selected, detached
+    components.sort(key=len, reverse=True)
+    for index, component in enumerate(components):
+        for component_x, component_y in component:
+            selected[component_y, component_x] = 255
+            if index > 0:
+                detached[component_y, component_x] = 255
+    return selected, detached
+
+
+def detached_large_components(mask: np.ndarray, minimum_pixels: int) -> np.ndarray:
+    height, width = mask.shape
+    seen = np.zeros((height, width), dtype=bool)
+    components: list[list[tuple[int, int]]] = []
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or seen[y, x]:
+                continue
+            component: list[tuple[int, int]] = []
+            stack = [(x, y)]
+            seen[y, x] = True
+            while stack:
+                current_x, current_y = stack.pop()
+                component.append((current_x, current_y))
+                for neighbor_y in range(max(0, current_y - 1), min(height, current_y + 2)):
+                    for neighbor_x in range(max(0, current_x - 1), min(width, current_x + 2)):
+                        if mask[neighbor_y, neighbor_x] and not seen[neighbor_y, neighbor_x]:
+                            seen[neighbor_y, neighbor_x] = True
+                            stack.append((neighbor_x, neighbor_y))
+            if len(component) >= minimum_pixels:
+                components.append(component)
+
+    result = np.zeros((height, width), dtype=np.uint8)
+    if len(components) <= 1:
+        return result
+    components.sort(key=len, reverse=True)
+    for component in components[1:]:
+        for component_x, component_y in component:
+            result[component_y, component_x] = 255
+    return result
+
+
+def add_detached_component_halo(
+    image: Image.Image,
+    detached_mask: np.ndarray | None = None,
+) -> Image.Image:
+    rgba = np.array(image.convert("RGBA"))
+    alpha = rgba[:, :, 3]
+    if detached_mask is None:
+        height, width = alpha.shape
+        minimum_pixels = max(32, round(height * width * 0.00016))
+        detached_mask = detached_large_components(alpha > 32, minimum_pixels)
+    detached = detached_mask.astype(bool)
+    if not detached.any():
+        return image
+
+    halo_image = Image.fromarray(np.uint8(detached) * 255, "L").filter(
+        ImageFilter.MaxFilter(9)
+    )
+    halo = (np.array(halo_image) > 0) & (~detached) & (alpha < 180)
+    rgba[:, :, 0][halo] = 255
+    rgba[:, :, 1][halo] = 250
+    rgba[:, :, 2][halo] = 244
+    rgba[:, :, 3][halo] = np.maximum(alpha[halo], 138)
+    return clear_transparent_rgb(Image.fromarray(rgba, "RGBA"))
+
+
+def fill_mask_holes(mask: np.ndarray) -> np.ndarray:
+    height, width = mask.shape
+    outside = np.zeros((height, width), dtype=bool)
+    stack: list[tuple[int, int]] = []
+
+    for x in range(width):
+        if not mask[0, x]:
+            stack.append((x, 0))
+            outside[0, x] = True
+        if not mask[height - 1, x] and not outside[height - 1, x]:
+            stack.append((x, height - 1))
+            outside[height - 1, x] = True
+    for y in range(height):
+        if not mask[y, 0] and not outside[y, 0]:
+            stack.append((0, y))
+            outside[y, 0] = True
+        if not mask[y, width - 1] and not outside[y, width - 1]:
+            stack.append((width - 1, y))
+            outside[y, width - 1] = True
+
+    while stack:
+        current_x, current_y = stack.pop()
+        for neighbor_y in range(max(0, current_y - 1), min(height, current_y + 2)):
+            for neighbor_x in range(max(0, current_x - 1), min(width, current_x + 2)):
+                if not mask[neighbor_y, neighbor_x] and not outside[neighbor_y, neighbor_x]:
+                    outside[neighbor_y, neighbor_x] = True
+                    stack.append((neighbor_x, neighbor_y))
+
+    return mask | (~outside)
+
+
 def keep_largest_alpha_component(image: Image.Image) -> Image.Image:
     rgba = np.array(image.convert("RGBA"))
     alpha = rgba[:, :, 3]
@@ -463,6 +643,55 @@ def keep_largest_alpha_component(image: Image.Image) -> Image.Image:
     rgba[:, :, 3] = cleaned_alpha
     rgba[cleaned_alpha == 0, :3] = 0
     return Image.fromarray(rgba, "RGBA")
+
+
+def remove_dark_background(
+    frame: Image.Image,
+    preserve_detached_components: bool = False,
+) -> Image.Image:
+    rgb = np.array(frame.convert("RGB"), dtype=np.float32)
+    height, width = rgb.shape[:2]
+    corner_size = max(4, min(height, width) // 24)
+    corner_samples = np.concatenate(
+        [
+            rgb[:corner_size, :corner_size].reshape(-1, 3),
+            rgb[:corner_size, -corner_size:].reshape(-1, 3),
+            rgb[-corner_size:, :corner_size].reshape(-1, 3),
+            rgb[-corner_size:, -corner_size:].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    background = np.median(corner_samples, axis=0)
+    distance = np.linalg.norm(rgb - background[None, None, :], axis=2)
+    seed = distance > 22.0
+    detached_mask: np.ndarray | None = None
+    if preserve_detached_components:
+        minimum_pixels = max(120, round(height * width * 0.0006))
+        subject, detached_mask = large_and_detached_components(seed, minimum_pixels)
+    else:
+        subject = center_component(seed)
+    if not subject.any():
+        return frame.convert("RGBA")
+
+    filled = fill_mask_holes(subject.astype(bool))
+    alpha_image = Image.fromarray(np.uint8(filled) * 255, "L").filter(
+        ImageFilter.GaussianBlur(0.45)
+    )
+    alpha_array = np.array(alpha_image, dtype=np.uint8)
+    alpha_array[alpha_array < 18] = 0
+    alpha_float = alpha_array.astype(np.float32) / 255.0
+    denominator = np.maximum(alpha_float[:, :, None], 0.08)
+    foreground = np.clip(
+        (rgb - (1.0 - alpha_float[:, :, None]) * background[None, None, :])
+        / denominator,
+        0,
+        255,
+    )
+    rgba = np.dstack([np.uint8(foreground), alpha_array])
+    image = clear_transparent_rgb(Image.fromarray(rgba, "RGBA"))
+    if preserve_detached_components:
+        return add_detached_component_halo(image, detached_mask)
+    return keep_largest_alpha_component(image)
 
 
 def remove_light_background(frame: Image.Image) -> Image.Image:
@@ -549,7 +778,16 @@ def pig_body_bbox(
         & ((green - blue) > 8)
         & ((red - blue) > 35)
     )
-    body = center_component(peach).astype(bool) if isolate_center_component else peach
+    if isolate_center_component:
+        detection_center = None
+        if frame.size == (WINDOW_SIZE, WINDOW_SIZE):
+            detection_center = (
+                BODY_ANCHOR_X,
+                BODY_ANCHOR_BOTTOM - TARGET_BODY_WIDTH * 0.45,
+            )
+        body = center_component(peach, detection_center).astype(bool)
+    else:
+        body = peach
     ys, xs = np.where(body)
     if xs.size == 0:
         bbox = frame.getbbox()
@@ -657,6 +895,7 @@ def identify_sources(source_dir: Path) -> dict[str, Path]:
         "flat.gif": "flat",
         "jump.gif": "jump",
         "carrot.gif": "carrot",
+        "question.gif": "question",
         "right_hump.gif": "right",
     }
     for path in paths:
@@ -679,11 +918,13 @@ def identify_sources(source_dir: Path) -> dict[str, Path]:
             result["jump"] = path
         elif size == (512, 512) and opaque and "carrot" not in result:
             result["carrot"] = path
+        elif "question" in name and "question" not in result:
+            result["question"] = path
         elif size == (512, 512) and "flat" not in result:
             result["flat"] = path
     if "left" not in result and "right" in result:
         result["left"] = result["right"]
-    missing = sorted({"left", "jump", "flat", "carrot"} - set(result))
+    missing = sorted({"left", "jump", "flat", "carrot", "question"} - set(result))
     if missing:
         raise SystemExit(f"Could not identify GIF roles: {', '.join(missing)}")
     return result
@@ -699,6 +940,11 @@ def load_animation(key: str, label: str, source: Path, remove_background: bool) 
             if remove_background:
                 frame = remove_light_background(frame)
                 frame = unify_carrot_pig_skin(frame)
+            if key == "question":
+                frame = remove_dark_background(
+                    frame,
+                    preserve_detached_components=True,
+                )
             frame = clear_transparent_rgb(frame)
             if key == "left" and source.name.lower() != "left_fixed.gif":
                 frame = repair_right_hump_edge_clipping(frame)
@@ -762,7 +1008,11 @@ def make_idle_breathing_animation(base: Animation) -> Animation:
 
 
 def cache_signature(source_dir: Path) -> dict[str, object]:
-    sources = identify_sources(source_dir)
+    sources = {
+        key: path
+        for key, path in identify_sources(source_dir).items()
+        if key in {"left", "jump", "flat", "carrot", "question"}
+    }
     return {
         "version": CACHE_VERSION,
         "target_body_width": TARGET_BODY_WIDTH,
@@ -860,6 +1110,109 @@ def premultiplied_bgra(canvas: Image.Image) -> bytes:
     return bgra.tobytes()
 
 
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def read_json_file(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    temporary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary_path, path)
+
+
+def load_ui_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    fonts_dir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    candidates = [
+        fonts_dir / ("msyhbd.ttc" if bold else "msyh.ttc"),
+        fonts_dir / ("Microsoft YaHei UI Bold.ttf" if bold else "Microsoft YaHei UI.ttf"),
+        fonts_dir / ("simhei.ttf" if bold else "simsun.ttc"),
+        fonts_dir / "Dengb.ttf" if bold else fonts_dir / "Deng.ttf",
+        fonts_dir / ("seguisb.ttf" if bold else "segoeui.ttf"),
+        "msyhbd.ttc" if bold else "msyh.ttc",
+        "Microsoft YaHei UI Bold.ttf" if bold else "Microsoft YaHei UI.ttf",
+        "simhei.ttf" if bold else "simsun.ttc",
+        "seguisb.ttf" if bold else "segoeui.ttf",
+        "arialbd.ttf" if bold else "arial.ttf",
+    ]
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(str(candidate), size)
+        except (OSError, TypeError):
+            continue
+    return ImageFont.load_default()
+
+
+def wrap_text_by_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    max_lines: int,
+) -> list[str]:
+    normalized = " ".join(str(text).replace("\r", " ").replace("\n", " ").split())
+    if not normalized:
+        return []
+
+    lines: list[str] = []
+    current = ""
+    for char in normalized:
+        candidate = current + char
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if current and bbox[2] - bbox[0] > max_width:
+            lines.append(current)
+            current = char
+            if len(lines) >= max_lines:
+                break
+        else:
+            current = candidate
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and len("".join(lines)) < len(normalized):
+        lines[-1] = lines[-1].rstrip(" .。") + "..."
+    return lines
+
+
+def repair_mojibake_text(value: object) -> str:
+    text = str(value)
+    if not text:
+        return ""
+    hint_chars = (
+        "\u7487",
+        "\u934f",
+        "\u9350",
+        "\u93b7",
+        "\u93c9",
+        "\u9424",
+        "\u59dd",
+        "\u6d93",
+        "\ufffd",
+    )
+    if not any(char in text for char in hint_chars):
+        return text
+    for encoding in ("gbk", "cp936"):
+        try:
+            repaired = text.encode(encoding).decode("utf-8")
+        except UnicodeError:
+            continue
+        original_cjk = sum("\u4e00" <= char <= "\u9fff" for char in text)
+        repaired_cjk = sum("\u4e00" <= char <= "\u9fff" for char in repaired)
+        if repaired_cjk >= max(1, original_cjk // 2):
+            return repaired
+    return text
+
+
 class PigPet:
     def __init__(
         self,
@@ -883,20 +1236,30 @@ class PigPet:
         self.drag_start_window: tuple[int, int] | None = None
         self.drag_previous: tuple[str | None, bool, int, float | None] | None = None
         self.drag_can_play_flat = False
+        self.permission_request: dict[str, object] | None = None
+        self.permission_request_id = ""
+        self.permission_button_down: str | None = None
+        self.permission_bubble_down = False
+        self.permission_buttons: dict[str, tuple[int, int, int, int]] = {}
+        self.permission_bubble_rect: tuple[int, int, int, int] | None = None
+        self.permission_dir = permission_dir_for_status(self.status_path)
+        self.heartbeat_path = heartbeat_path_for_status(self.status_path)
+        self.last_heartbeat = 0.0
         self.hwnd: int | None = None
         self.timer_id = 1
         self.wndproc = WNDPROC(self._wndproc)
         self.render_cache: dict[tuple[str, int], bytes] = {}
         self.effects = self._load_effects()
         initial_status = read_status(self.status_path)
-        self.bridge_token = str(initial_status.get("token", ""))
-        self.bridge_status = (
-            "thinking" if self._is_fresh_thinking_status(initial_status) else "idle"
-        )
+        self.bridge_token = ""
+        self.bridge_status = "idle"
         self.last_status_poll = 0.0
+        self._apply_bridge_payload(initial_status)
 
     @property
     def current_key(self) -> str:
+        if self.permission_request is not None:
+            return "question"
         if self.transient_key is not None:
             return self.transient_key
         if self.mode == "responsive":
@@ -957,6 +1320,7 @@ class PigPet:
             raise ctypes.WinError(ctypes.get_last_error())
 
         user32.ShowWindow(self.hwnd, SW_SHOW)
+        self._write_heartbeat(force=True)
         self._render_current()
         self._schedule_current()
 
@@ -971,6 +1335,34 @@ class PigPet:
         user32.KillTimer(self.hwnd, self.timer_id)
         duration = self.current_animation.durations[self.frame_index]
         user32.SetTimer(self.hwnd, self.timer_id, duration, None)
+
+    def _write_heartbeat(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self.last_heartbeat < HEARTBEAT_INTERVAL_SECONDS:
+            return
+        self.last_heartbeat = now
+        payload: dict[str, object] = {
+            "app": APP_NAME,
+            "pid": os.getpid(),
+            "updated_at": utc_timestamp(),
+            "status_path": str(self.status_path),
+            "current_key": self.current_key,
+        }
+        if self.hwnd is not None:
+            payload["hwnd"] = int(self.hwnd)
+            position = RECT()
+            if user32.GetWindowRect(self.hwnd, ctypes.byref(position)):
+                payload["window_rect"] = [
+                    int(position.left),
+                    int(position.top),
+                    int(position.right),
+                    int(position.bottom),
+                ]
+            payload["window_visible"] = bool(user32.IsWindowVisible(self.hwnd))
+        try:
+            write_json_atomic(self.heartbeat_path, payload)
+        except OSError:
+            pass
 
     def _switch_visual(self, key: str | None, once: bool = False) -> None:
         self.transient_key = key
@@ -991,6 +1383,74 @@ class PigPet:
             payload.get("status") == "thinking"
             and self._bridge_status_age_seconds() <= THINKING_STATUS_STALE_SECONDS
         )
+
+    def _is_fresh_permission_status(self, payload: dict[str, object]) -> bool:
+        return (
+            payload.get("status") == "permission"
+            and self._bridge_status_age_seconds() <= PERMISSION_STATUS_STALE_SECONDS
+        )
+
+    def _permission_request_path(self, request_id: str) -> Path:
+        return self.permission_dir / f"{request_id}.request.json"
+
+    def _permission_response_path(self, request_id: str) -> Path:
+        return self.permission_dir / f"{request_id}.response.json"
+
+    def _permission_request_expired(self, payload: dict[str, object]) -> bool:
+        expires_at = str(payload.get("expires_at", ""))
+        if not expires_at:
+            return False
+        try:
+            deadline = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return False
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= deadline.astimezone(timezone.utc)
+
+    def _clear_permission_request(self) -> bool:
+        previous_key = self.current_key
+        self.permission_request = None
+        self.permission_request_id = ""
+        self.permission_button_down = None
+        self.permission_bubble_down = False
+        self.permission_buttons = {}
+        self.permission_bubble_rect = None
+        if previous_key == "question":
+            self.frame_index = 0
+            self.render_cache.clear()
+            self._render_current()
+            self._schedule_current()
+            return True
+        return False
+
+    def _sync_permission_request(self, payload: dict[str, object]) -> bool:
+        request_id = str(payload.get("permission_request_id", ""))
+        if not request_id:
+            return self._clear_permission_request()
+
+        response_path = self._permission_response_path(request_id)
+        if response_path.is_file():
+            return self._clear_permission_request()
+
+        request = read_json_file(self._permission_request_path(request_id))
+        if request is None or self._permission_request_expired(request):
+            return self._clear_permission_request()
+
+        previous_key = self.current_key
+        self.permission_request = request
+        self.permission_request_id = request_id
+        self.bridge_status = "idle"
+        self.transient_key = None
+        self.transient_once = False
+        self.success_effect_started = None
+        if previous_key != self.current_key or self.frame_index >= len(self.current_animation.frames):
+            self.frame_index = 0
+            self.render_cache.clear()
+            self._render_current()
+            self._schedule_current()
+            return True
+        return False
 
     def _set_bridge_status(self, status: str) -> bool:
         previous_key = self.current_key
@@ -1019,13 +1479,23 @@ class PigPet:
         token = str(payload.get("token", ""))
         status = str(payload.get("status", "idle"))
         if not token:
+            self._clear_permission_request()
+            return self._set_bridge_status("idle")
+        if status == "permission":
+            self.bridge_token = token
+            if self._is_fresh_permission_status(payload):
+                return self._sync_permission_request(payload)
+            self._clear_permission_request()
             return self._set_bridge_status("idle")
         if token == self.bridge_token:
+            if self.permission_request is not None:
+                return self._clear_permission_request()
             if self.bridge_status == "thinking" and status == "thinking":
                 if not self._is_fresh_thinking_status(payload):
                     return self._set_bridge_status("idle")
             return False
         self.bridge_token = token
+        self._clear_permission_request()
         if status == "success":
             return self._start_success_animation()
 
@@ -1044,6 +1514,7 @@ class PigPet:
         return self._apply_bridge_payload(read_status(self.status_path))
 
     def _advance(self) -> None:
+        self._write_heartbeat()
         if self._poll_bridge():
             return
         animation = self.current_animation
@@ -1097,18 +1568,23 @@ class PigPet:
             return
         progress = elapsed / SUCCESS_EFFECT_DURATION_SECONDS
         fade = min(1.0, progress / 0.18) * min(1.0, (1.0 - progress) / 0.28)
+        effect_dx = BODY_ANCHOR_X - 230
+        effect_dy = BODY_ANCHOR_BOTTOM - 390
         firework_size = round(34 + 28 * min(1.0, progress / 0.42))
         firework = self._effect_variant("firework", firework_size, fade * 0.82)
         if firework is not None:
             canvas.alpha_composite(
                 firework,
-                (300 - firework.width // 2, 282 - firework.height // 2),
+                (
+                    300 + effect_dx - firework.width // 2,
+                    282 + effect_dy - firework.height // 2,
+                ),
             )
 
         sparkles = [
-            (154, 266, 19, 0.00),
-            (279, 235, 15, 0.13),
-            (184, 224, 12, 0.26),
+            (154 + effect_dx, 266 + effect_dy, 19, 0.00),
+            (279 + effect_dx, 235 + effect_dy, 15, 0.13),
+            (184 + effect_dx, 224 + effect_dy, 12, 0.26),
         ]
         for center_x, center_y, base_size, phase in sparkles:
             local = (progress - phase) / max(0.01, 1.0 - phase)
@@ -1129,13 +1605,111 @@ class PigPet:
                     ),
                 )
 
+    def _composite_permission_bubble(self, canvas: Image.Image) -> None:
+        request = self.permission_request
+        if request is None:
+            self.permission_buttons = {}
+            self.permission_bubble_rect = None
+            return
+
+        def draw_centered_text(
+            button_rect: tuple[int, int, int, int],
+            text: str,
+            fill: tuple[int, int, int, int],
+            offset: int,
+        ) -> None:
+            center = (
+                (button_rect[0] + button_rect[2]) / 2,
+                (button_rect[1] + button_rect[3]) / 2 + offset,
+            )
+            try:
+                draw.text(center, text, fill=fill, font=button_font, anchor="mm")
+            except TypeError:
+                bbox = draw.textbbox((0, 0), text, font=button_font)
+                text_x = center[0] - (bbox[2] - bbox[0]) / 2
+                text_y = center[1] - (bbox[3] - bbox[1]) / 2 - bbox[1]
+                draw.text((text_x, text_y), text, fill=fill, font=button_font)
+
+        draw = ImageDraw.Draw(canvas, "RGBA")
+        title_font = load_ui_font(18, bold=True)
+        body_font = load_ui_font(14)
+        button_font = load_ui_font(15, bold=True)
+
+        tool_name = str(request.get("tool_name", "Codex"))
+        summary = str(request.get("summary", "Codex 正在请求权限"))
+        tool_name = repair_mojibake_text(tool_name)
+        summary = repair_mojibake_text(summary)
+        detail = f"{tool_name}: {summary}" if tool_name else summary
+        lines = wrap_text_by_width(draw, detail, body_font, 248, 4)
+
+        left = 262
+        top = 160
+        right = 558
+        line_height = 20
+        button_height = 32
+        button_bottom_padding = 16
+        bubble_height = max(
+            138,
+            58 + line_height * max(1, len(lines)) + button_height + button_bottom_padding,
+        )
+        bottom = min(348, top + bubble_height)
+        rect = (left, top, right, bottom)
+        self.permission_bubble_rect = rect
+
+        shadow = (left + 3, top + 4, right + 3, bottom + 4)
+        draw.rounded_rectangle(shadow, radius=18, fill=(0, 0, 0, 82))
+        pointer = [(396, bottom - 2), (424, bottom - 2), (410, bottom + 22)]
+        pointer_shadow = [(x + 2, y + 3) for x, y in pointer]
+        draw.polygon(pointer_shadow, fill=(0, 0, 0, 62))
+        draw.rounded_rectangle(
+            rect,
+            radius=18,
+            fill=(255, 250, 244, 242),
+            outline=(236, 70, 142, 235),
+            width=3,
+        )
+        draw.polygon(pointer, fill=(255, 250, 244, 242))
+        draw.line((398, bottom - 3, 422, bottom - 3), fill=(255, 250, 244, 255), width=4)
+
+        draw.text((left + 14, top + 12), "Codex 请求权限", fill=(48, 40, 42, 255), font=title_font)
+        text_y = top + 42
+        for line in lines:
+            draw.text((left + 18, text_y), line, fill=(76, 67, 70, 255), font=body_font)
+            text_y += line_height
+
+        button_top = bottom - button_height - button_bottom_padding
+        allow_rect = (left + 38, button_top, left + 130, button_top + button_height)
+        deny_rect = (right - 130, button_top, right - 38, button_top + button_height)
+        self.permission_buttons = {"allow": allow_rect, "deny": deny_rect}
+
+        pressed = self.permission_button_down
+        for action, button_rect, label, fill, outline, text_fill in [
+            ("allow", allow_rect, "允许", (94, 199, 123, 255), (69, 174, 99, 255), (255, 255, 255, 255)),
+            ("deny", deny_rect, "拒绝", (255, 237, 242, 255), (236, 70, 142, 230), (198, 47, 112, 255)),
+        ]:
+            offset = 1 if pressed == action else 0
+            draw.rounded_rectangle(
+                (
+                    button_rect[0],
+                    button_rect[1] + offset,
+                    button_rect[2],
+                    button_rect[3] + offset,
+                ),
+                radius=16,
+                fill=fill,
+                outline=outline,
+                width=3,
+            )
+            draw_centered_text(button_rect, label, text_fill, offset)
+
     def _frame_bytes(self, key: str, index: int) -> bytes:
         has_dynamic_effects = (
             key == "jump"
             and self.success_effect_started is not None
         )
+        has_permission_ui = self.permission_request is not None
         cache_key = (key, index)
-        if not has_dynamic_effects:
+        if not has_dynamic_effects and not has_permission_ui:
             cached = self.render_cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -1146,8 +1720,10 @@ class PigPet:
         canvas.alpha_composite(frame, (x, y))
         if has_dynamic_effects:
             self._composite_success_effects(canvas)
+        if has_permission_ui:
+            self._composite_permission_bubble(canvas)
         result = premultiplied_bgra(canvas)
-        if not has_dynamic_effects:
+        if not has_dynamic_effects and not has_permission_ui:
             self.render_cache[cache_key] = result
         return result
 
@@ -1202,6 +1778,47 @@ class PigPet:
         gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(None, screen_dc)
 
+    def _cursor_window_position(self) -> tuple[int, int] | None:
+        if self.hwnd is None:
+            return None
+        cursor = POINT()
+        window = RECT()
+        user32.GetCursorPos(ctypes.byref(cursor))
+        user32.GetWindowRect(self.hwnd, ctypes.byref(window))
+        return (cursor.x - window.left, cursor.y - window.top)
+
+    @staticmethod
+    def _point_in_rect(point: tuple[int, int], rect: tuple[int, int, int, int] | None) -> bool:
+        if rect is None:
+            return False
+        x, y = point
+        left, top, right, bottom = rect
+        return left <= x <= right and top <= y <= bottom
+
+    def _hit_permission_button(self, point: tuple[int, int]) -> str | None:
+        for action, rect in self.permission_buttons.items():
+            if self._point_in_rect(point, rect):
+                return action
+        return None
+
+    def _write_permission_decision(self, decision: str) -> None:
+        if not self.permission_request_id or decision not in {"allow", "deny"}:
+            return
+        response_path = self._permission_response_path(self.permission_request_id)
+        payload: dict[str, object] = {
+            "request_id": self.permission_request_id,
+            "decision": decision,
+            "updated_at": utc_timestamp(),
+            "source": "pig-pet",
+        }
+        if decision == "deny":
+            payload["message"] = "Denied from GooglePiggy Desktop Pet."
+        try:
+            write_json_atomic(response_path, payload)
+        except OSError:
+            return
+        self._clear_permission_request()
+
     def _restore_after_drag(
         self,
         previous: tuple[str | None, bool, int, float | None],
@@ -1220,6 +1837,19 @@ class PigPet:
     def _handle_left_button_down(self) -> None:
         if self.hwnd is None:
             return
+        window_point = self._cursor_window_position()
+        if self.permission_request is not None and window_point is not None:
+            action = self._hit_permission_button(window_point)
+            if action is not None:
+                self.permission_button_down = action
+                self.permission_bubble_down = True
+                user32.SetCapture(self.hwnd)
+                self._render_current()
+                return
+            if self._point_in_rect(window_point, self.permission_bubble_rect):
+                self.permission_bubble_down = True
+                user32.SetCapture(self.hwnd)
+                return
         start = POINT()
         window = RECT()
         user32.GetCursorPos(ctypes.byref(start))
@@ -1242,6 +1872,11 @@ class PigPet:
         user32.SetCapture(self.hwnd)
 
     def _handle_mouse_move(self, wparam: int) -> None:
+        if self.permission_button_down is not None:
+            self._render_current()
+            return
+        if self.permission_bubble_down:
+            return
         if (
             self.hwnd is None
             or not self.mouse_down
@@ -1277,6 +1912,17 @@ class PigPet:
         )
 
     def _handle_left_button_up(self) -> None:
+        if self.permission_button_down is not None or self.permission_bubble_down:
+            action = self.permission_button_down
+            self.permission_button_down = None
+            self.permission_bubble_down = False
+            user32.ReleaseCapture()
+            point = self._cursor_window_position()
+            if action is not None and point is not None and self._hit_permission_button(point) == action:
+                self._write_permission_decision(action)
+            else:
+                self._render_current()
+            return
         if not self.mouse_down:
             return
         was_dragging = self.dragging
@@ -1306,6 +1952,8 @@ class PigPet:
         self.drag_start_window = None
         self.drag_previous = None
         self.drag_can_play_flat = False
+        self.permission_button_down = None
+        self.permission_bubble_down = False
         if was_dragging and previous is not None:
             self._restore_after_drag(previous)
 
@@ -1320,6 +1968,7 @@ class PigPet:
             (103, "预览：猪追胡萝卜", "carrot"),
             (104, "预览：跳跳猪", "jump"),
             (105, "预览：躺平", "flat"),
+            (106, "预览：疑问猪", "question"),
         ]
         for command, label, mode in entries:
             flags = MF_STRING | (MF_CHECKED if self.mode == mode else 0)
@@ -1347,7 +1996,7 @@ class PigPet:
             user32.DestroyWindow(self.hwnd)
         elif command == 150:
             set_autostart(not is_autostart_enabled(), self.app_dir)
-        elif 100 <= command <= 105:
+        elif 100 <= command <= 106:
             self._select_mode(entries[command - 100][2])
 
     def _wndproc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int:
@@ -1383,6 +2032,7 @@ def build_animations(source_dir: Path) -> dict[str, Animation]:
         "carrot": load_animation("carrot", "猪追胡萝卜", sources["carrot"], True),
         "jump": load_animation("jump", "跳跳猪", sources["jump"], False),
         "flat": flat,
+        "question": load_animation("question", "疑问猪", sources["question"], False),
     }
 
 
@@ -1575,9 +2225,10 @@ def main() -> None:
     parser.add_argument("--qa-only", action="store_true")
     parser.add_argument(
         "--bridge-event",
-        choices=["idle", "thinking", "success", "error"],
+        choices=["idle", "thinking", "success", "error", "permission"],
     )
     parser.add_argument("--bridge-message", default="")
+    parser.add_argument("--permission-request-id", default="")
     parser.add_argument("--enable-autostart", action="store_true")
     parser.add_argument("--disable-autostart", action="store_true")
     args = parser.parse_args()
@@ -1596,12 +2247,24 @@ def main() -> None:
                 source="pig-pet-cli",
                 event="manual",
                 message=args.bridge_message,
+                permission_request_id=args.permission_request_id,
                 path=status_path,
             )
             return
         if args.enable_autostart or args.disable_autostart:
             set_autostart(args.enable_autostart, app_dir)
             return
+
+        write_json_atomic(
+            heartbeat_path_for_status(status_path),
+            {
+                "app": APP_NAME,
+                "pid": os.getpid(),
+                "updated_at": utc_timestamp(),
+                "status_path": str(status_path),
+                "phase": "starting",
+            },
+        )
 
         source_dir = (
             args.source_dir.expanduser().resolve()
