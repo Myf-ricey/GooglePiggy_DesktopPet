@@ -1,22 +1,28 @@
-# Release Checklist
+# Cross-platform Release Checklist
 
-Use this checklist before publishing a GitHub release.
+Use this checklist before publishing GooglePiggy `v0.2.3` or a later release.
 
-## Before Uploading Source
+## 1. Source package
 
-- Confirm `assets/` artwork can be redistributed publicly.
-- Choose and add a `LICENSE` file if you want the code to be open source.
-- Do not commit generated folders: `.venv-build/`, `build/`, `cache/`, `dist/`, `qa/`.
-- Keep source GIF names ASCII-friendly in public packages:
-  - `assets/source-gifs/left_fixed.gif`
-  - `assets/source-gifs/flat.gif`
-  - `assets/source-gifs/jump.gif`
-  - `assets/source-gifs/carrot.gif`
-  - `assets/source-gifs/question.gif`
+- Keep the existing Windows runtime, installer, PowerShell hook, build script, and workflow.
+- Include the native macOS AppKit runtime, installer, uninstaller, build script, and workflow.
+- Include `README.md`, `README-MAC.md`, `MACOS-PORTING.md`, and this checklist.
+- Do not include `.git/`, virtual environments, `build/`, `cache/`, `dist/`, `qa/`,
+  `__pycache__/`, `.DS_Store`, or personal test files.
+- Confirm the artwork under `assets/` may be redistributed; see `ASSET-NOTICE.md`.
 
-## Local Verification
+The prepared source overlay is:
 
-Run:
+```text
+GooglePiggy-GitHub-source-v0.2.3.zip
+```
+
+Extract it into a clone of the existing Windows repository and replace files with the
+same names. Review the diff before committing.
+
+## 2. Windows verification
+
+On Windows 10/11 x64:
 
 ```powershell
 python -m pip install -r requirements-dev.txt
@@ -26,37 +32,88 @@ python tools\smoke_test.py
 .\build-release.ps1
 ```
 
-Expected output:
+Expected artifact:
 
 ```text
-smoke_test=ok
 dist\GifPigDesktopPet-windows-x64.zip
 ```
 
-## GitHub Release
+Manual checks:
 
-Recommended tag format:
+- Desktop shortcut and current-user autostart work.
+- Codex thinking, completion, and permission events reach the pet.
+- Permission allow/deny is returned to Codex.
+- Existing Windows install and uninstall behavior is unchanged.
 
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
+## 3. macOS verification
+
+On macOS 13 or later:
+
+```zsh
+./build-macos.sh
+codesign --verify --deep --strict build/macos/GooglePiggy.app
+lipo -info build/macos/GooglePiggy.app/Contents/MacOS/GooglePiggy
+hdiutil verify dist/GooglePiggy-macos-universal.dmg
+unzip -tq dist/GooglePiggy-macos-universal.zip
 ```
 
-The workflow `.github/workflows/windows-release.yml` builds the ZIP and uploads it to the tagged release.
+Expected tests and artifacts:
 
-## Manual Install Test
-
-On a clean Windows 10/11 x64 machine:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+```text
+smoke_test=ok
+macos_manifest_test=ok
+macos_release_test=ok
+dist/GooglePiggy-macos-universal.zip
+dist/GooglePiggy-macos-universal.dmg
 ```
 
-Check:
+`lipo` must report both `arm64` and `x86_64`.
 
-- The desktop shortcut launches the pet.
-- Autostart registry value is created under the current user.
-- Codex asks to trust the hook once after restart.
-- Thinking state plays carrot.
-- Stop state plays jump celebration and returns to idle.
-- PermissionRequest shows the question pig bubble, then allow/deny is returned to Codex.
+Regression checks from the first macOS test cycle:
+
+- Cancelling the right-click menu does not hide or terminate the pet.
+- Newly installed Codex hooks clearly instruct the user to complete `/hooks` trust.
+- Thinking and completion animations run after trust is granted.
+- Permission summaries wrap onto multiple lines instead of truncating after one line.
+- `apply_patch` permission requests show a localized action and absolute `/Users/...`
+  path, never the raw patch protocol or internal tool name.
+- When a hook omits `tool_input`, the same session/turn/tool record restores the exact
+  operation and target instead of displaying a generic fallback.
+- Session recovery accepts both quoted JSON fields and unquoted JavaScript object fields,
+  including shell-wrapped patches and a later non-permission command in the same turn.
+- Relative targets are expanded from the session working directory; if neither hook nor
+  session contains details, the pig leaves authorization to Codex instead of presenting a
+  vague allow/deny question.
+
+## 4. GitHub upload
+
+Commit the source overlay only after reviewing it. A `v*` tag starts both workflows:
+
+```text
+.github/workflows/windows-release.yml
+.github/workflows/macos-release.yml
+```
+
+Recommended tag:
+
+```text
+v0.2.3
+```
+
+Attach these locally verified universal Mac assets to the GitHub Release:
+
+```text
+GooglePiggy-macos-universal.zip
+GooglePiggy-macos-universal.dmg
+```
+
+The workflows additionally produce Windows x64, macOS arm64, and macOS x64 assets.
+Use `RELEASE-NOTES-v0.2.3.md` as the starting release description.
+
+## 5. Public-release polish
+
+- Replace the ad-hoc Mac signature with a Developer ID Application signature when
+  available.
+- Submit the Mac app for Apple notarization and staple the ticket.
+- Test installation on a clean Windows user and a clean macOS user.
+- Verify every downloadable asset against `SHA256SUMS.txt`.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +24,14 @@ def default_status_path() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         return Path(local_app_data) / APP_DATA_DIR_NAME / STATUS_FILE_NAME
+    if sys.platform == "darwin":
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / APP_DATA_DIR_NAME
+            / STATUS_FILE_NAME
+        )
     return Path.home() / f".{APP_DATA_DIR_NAME}" / STATUS_FILE_NAME
 
 

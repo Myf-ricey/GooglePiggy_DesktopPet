@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .venv-build/
+.venv-macos/
+.venv-macos-build/
 build/
 cache/
 dist/
