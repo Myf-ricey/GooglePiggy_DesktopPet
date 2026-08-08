@@ -12,6 +12,54 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from PIL import Image, ImageChops
+
+
+EDGE_TAIL_CANVAS_SIZE = 68
+# The 40° left rump arc naturally spans 13 thresholded pixels at its tangent;
+# the original rectangular crop seam spanned 33, so 14 keeps useful separation.
+EDGE_TAIL_MAX_EXPOSED_CUT_RUN = 14
+EDGE_TAIL_SCREEN_OVERLAP = {
+    "left": 30,
+    "right": 30,
+    "top": 30,
+    "bottom": 30,
+}
+
+
+def longest_true_run(values: list[bool]) -> int:
+    longest = 0
+    current = 0
+    for value in values:
+        current = current + 1 if value else 0
+        longest = max(longest, current)
+    return longest
+
+
+def exposed_tail_cut_run(image: Image.Image, edge: str) -> int:
+    """Measure the former rectangular cut on the visible side of each pose."""
+
+    alpha = image.getchannel("A")
+    opaque = alpha.point(lambda value: 255 if value >= 96 else 0)
+    bounds = opaque.getbbox()
+    assert bounds is not None
+    opaque = opaque.crop(bounds)
+    if edge == "right":
+        values = [opaque.getpixel((x, 0)) > 0 for x in range(opaque.width)]
+    elif edge == "bottom":
+        values = [
+            opaque.getpixel((opaque.width - 1, y)) > 0
+            for y in range(opaque.height)
+        ]
+    elif edge == "top":
+        values = [opaque.getpixel((0, y)) > 0 for y in range(opaque.height)]
+    else:
+        values = [
+            opaque.getpixel((x, opaque.height - 1)) > 0
+            for x in range(opaque.width)
+        ]
+    return longest_true_run(values)
+
 
 def run(
     executable: Path,
@@ -157,15 +205,97 @@ def main() -> None:
     icon = app / "Contents" / "Resources" / "AppIcon.icns"
     assert icon.is_file()
     assert icon.read_bytes()[:4] == b"icns"
+    manifest = read_json(app / "Contents" / "Resources" / "animation-manifest.json")
+    animations = manifest["animations"]
+    assert isinstance(animations, dict)
+    for animation in animations.values():
+        assert isinstance(animation, dict)
+        for frame in animation["frames"]:
+            assert isinstance(frame, dict)
+            bounds = frame["visible_bounds"]
+            assert isinstance(bounds, list) and len(bounds) == 4
+            assert 0 <= bounds[0] < bounds[2] <= 640
+            assert 0 <= bounds[1] < bounds[3] <= 640
+    reveal_frames = animations["edge_reveal"]["frames"]
+    assert len(reveal_frames) == 19
+    reveal_bounds = [frame["visible_bounds"] for frame in reveal_frames]
+    assert reveal_bounds[0] == reveal_bounds[-1]
+    assert min(bounds[1] for bounds in reveal_bounds) < reveal_bounds[0][1]
+    assert max(bounds[3] - bounds[1] for bounds in reveal_bounds) > (
+        reveal_bounds[0][3] - reveal_bounds[0][1]
+    )
+    reveal_gif = app / "Contents" / "Resources" / "animations" / "edge-reveal.gif"
+    assert reveal_gif.read_bytes()[:3] == b"GIF"
+    with Image.open(reveal_gif) as image:
+        assert image.size == (640, 640)
+        assert image.n_frames == 19
+
+    tail_images: dict[str, Image.Image] = {}
+    for edge in ("left", "right", "top", "bottom"):
+        tail = app / "Contents" / "Resources" / "edge-tail" / f"{edge}.png"
+        assert tail.is_file()
+        with Image.open(tail) as image:
+            rgba = image.convert("RGBA")
+            assert rgba.size == (
+                EDGE_TAIL_CANVAS_SIZE,
+                EDGE_TAIL_CANVAS_SIZE,
+            )
+            bounds = rgba.getchannel("A").getbbox()
+            assert bounds is not None
+            assert bounds[2] - bounds[0] >= 52
+            assert bounds[3] - bounds[1] >= 52
+            assert exposed_tail_cut_run(rgba, edge) <= (
+                EDGE_TAIL_MAX_EXPOSED_CUT_RUN
+            )
+            overlap = EDGE_TAIL_SCREEN_OVERLAP[edge]
+            if edge == "right":
+                visible_depth = EDGE_TAIL_CANVAS_SIZE - overlap - bounds[0]
+            elif edge == "bottom":
+                visible_depth = EDGE_TAIL_CANVAS_SIZE - overlap - bounds[1]
+            elif edge == "top":
+                visible_depth = bounds[3] - overlap
+            else:
+                visible_depth = bounds[2] - overlap
+            assert 22 <= visible_depth <= 24
+            if edge == "left":
+                assert bounds[0] == 0
+            elif edge == "right":
+                assert bounds[2] == EDGE_TAIL_CANVAS_SIZE
+            elif edge == "top":
+                assert bounds[1] == 0
+            else:
+                assert bounds[3] == EDGE_TAIL_CANVAS_SIZE
+            tail_images[edge] = rgba.crop(bounds)
+    expected_right = tail_images["bottom"].transpose(Image.Transpose.ROTATE_90)
+    assert expected_right.size == tail_images["right"].size
+    assert ImageChops.difference(expected_right, tail_images["right"]).getbbox() is None
+    common_left = tail_images["bottom"].transpose(Image.Transpose.ROTATE_270)
+    assert common_left.size != tail_images["left"].size or (
+        ImageChops.difference(common_left, tail_images["left"]).getbbox()
+        is not None
+    )
 
     if args.source_dir is not None:
         source_dir = args.source_dir.resolve()
         controller_source = (
             source_dir / "macos" / "Sources" / "GooglePiggy" / "PetController.swift"
         ).read_text(encoding="utf-8")
+        edge_hiding_source = (
+            source_dir / "macos" / "Sources" / "GooglePiggy" / "EdgeHiding.swift"
+        ).read_text(encoding="utf-8")
         installer_source = (source_dir / "macos" / "install.command").read_text(
             encoding="utf-8"
         )
+        main_source = (
+            source_dir / "macos" / "Sources" / "GooglePiggy" / "main.swift"
+        ).read_text(encoding="utf-8")
+        package_source = (source_dir / "tools" / "package_github_source.py").read_text(
+            encoding="utf-8"
+        )
+        asset_export_source = (
+            source_dir / "tools" / "export_macos_assets.py"
+        ).read_text(encoding="utf-8")
+        gitignore_source = (source_dir / ".gitignore").read_text(encoding="utf-8")
         assert "applicationShouldTerminateAfterLastWindowClosed" in controller_source
         assert "return false" in controller_source
         assert "restorePetWindowAfterMenuDismissal()" in controller_source
@@ -175,6 +305,36 @@ def main() -> None:
         assert "paragraph.lineBreakMode = .byCharWrapping" in controller_source
         assert "permissionBodyText(summary).draw(" in controller_source
         assert ".truncatesLastVisibleLine" not in controller_source
+        assert "beginEdgeHideIfNeeded()" in controller_source
+        assert "activityRequiresVisiblePet" in controller_source
+        assert "let edgeFrame = screen.frame" in controller_source
+        assert "let revealFrame = screen.visibleFrame" in controller_source
+        edge_transition_source = controller_source[
+            controller_source.index("private func beginEdgeHideIfNeeded"):
+            controller_source.index("private func revealForActivityIfNeeded")
+        ]
+        assert edge_transition_source.count('switchVisual("edge_reveal"') == 2
+        assert 'switchVisual("jump"' not in edge_transition_source
+        assert "func canEnterEdgeHide(" in edge_hiding_source
+        assert "func touchedDesktopEdge(" in edge_hiding_source
+        assert "static let revealClearance" in edge_hiding_source
+        assert "static let tailScreenOverlap: CGFloat = 30" in edge_hiding_source
+        assert (
+            "bottomRevealDropHeightMultiplier: CGFloat = 1"
+            in edge_hiding_source
+        )
+        assert "bottomDrop: bottomRevealDrop(for:" in controller_source
+        assert (
+            "EDGE_TAIL_COMMON_CLOCKWISE_TILT_DEGREES = 55"
+            in asset_export_source
+        )
+        assert (
+            "EDGE_TAIL_LEFT_CLOCKWISE_TILT_DEGREES = 50"
+            in asset_export_source
+        )
+        assert '"learning-materials"' in package_source
+        assert "learning-materials/" in gitignore_source
+        assert "--preview-edge-hide" in main_source
         assert "/hooks" in installer_source
         assert "Trust all and continue" in installer_source
         assert 'pkill -x "GooglePiggy"' in installer_source

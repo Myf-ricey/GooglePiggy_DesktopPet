@@ -5,6 +5,21 @@ import Foundation
 signal(SIGPIPE, SIG_IGN)
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+var startupEdgePreview: DesktopEdge? = nil
+
+if arguments.first == "--preview-edge-hide" {
+    guard
+        arguments.count == 2,
+        let edge = DesktopEdge(rawValue: arguments[1])
+    else {
+        fputs(
+            "Usage: GooglePiggy --preview-edge-hide left|right|top|bottom\n",
+            stderr
+        )
+        exit(EXIT_FAILURE)
+    }
+    startupEdgePreview = edge
+}
 
 if arguments.first == "--hook" {
     runCodexHook()
@@ -178,6 +193,6 @@ if arguments.first == "--self-test" {
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
-let controller = PetController()
+let controller = PetController(startupEdgePreview: startupEdgePreview)
 application.delegate = controller
 application.run()

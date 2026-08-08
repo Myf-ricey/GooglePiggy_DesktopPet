@@ -35,6 +35,7 @@ Windows 版不能直接在 macOS 运行，原因不是素材或 Python 版本，
 | 呼吸待机 | 有 | 同一 49 帧生成规则 |
 | 点击躺平 | 有 | 有 |
 | 拖动左拱 | 有 | 有 |
+| 空闲触边隐藏、点尾跳回 | 待对接 | 有，支持四个桌面外边缘 |
 | Codex thinking 追胡萝卜 | 有 | 有 |
 | Codex success 跳跃 | 有 | 同一 61 帧筛选规则 |
 | 火花与烟花 | 有 | 有，同位置/时长/淡入淡出公式 |
@@ -60,6 +61,41 @@ Windows 版不能直接在 macOS 运行，原因不是素材或 Python 版本，
 - 现有 sparkle/firework 素材。
 
 因此 Mac 版不是重新解释 GIF，而是消费与 Windows 版同源的标准化帧。
+
+## 触边隐藏的 Windows 对接契约
+
+macOS 把平台无关规则集中在 `EdgeHiding.swift`，`PetController.swift` 只负责编排
+AppKit 窗口和动画。Windows 版可直接按以下契约接入，而不需要照搬 `NSPanel`：
+
+1. 仅当 `mode == "responsive"`、桥接状态为 `idle`、没有权限请求、没有一次性
+   动画时允许隐藏。`thinking`、权限请求和完成特效都要求猪猪保持可见；若它们在
+   隐藏期间到达，应自动触发跳出。
+2. `animation-manifest.json` 每帧的 `visible_bounds` 是
+   `[left, top, right, bottom]`，坐标原点在 640×640 动画窗口左上角。边缘碰撞必须
+   使用这个非透明像素框，不能使用整个透明窗口。
+3. `touchedDesktopEdge`、`offscreenDelta`、`revealedDelta` 和
+   `tailWindowFrame` 是纯几何参考实现。输入转换到“屏幕坐标、Y 轴向上”后，
+   Win32 端只需把结果交给 `SetWindowPos` 或自己的插值动画。
+4. 隐藏碰撞、完全移出和尾巴位置使用显示器物理 `frame`；完整猪猪跳回时使用避开
+   Dock/菜单栏的 `visibleFrame`。不能把后者当物理边缘，否则底部尾巴会悬浮。
+5. 当前参数为：触边容差 10 pt、完全入边额外距离 16 pt、跳回后可见内容距边缘
+   28 pt、尾巴点击窗 68×68 pt、向物理屏幕外压入 30 pt、位移动画 0.48 秒。
+   Windows 在 DPI 缩放后使用对应逻辑像素，并允许尾巴点击窗有同样的屏外部分。
+   从底边跳回时是例外：在标准安全位置基础上，再向下移动 1 个当前猪猪的非透明
+   像素高度。不得使用 640×640 透明宿主窗口的高度。
+6. 四向尾巴由 `tools/export_macos_assets.py` 从 `flat` 首帧自动裁切，输出到
+   `edge-tail/{left,right,top,bottom}.png`；Windows 可以直接复用导出文件或同一
+   裁切函数。右边缘姿态以现场反馈为准，相对旧姿态逆时针旋转 90°；四向素材按
+   非透明像素框贴边，透明画布不参与锚定。导出器保留更大的尾巴与臀部区域，先将
+   两条裁切侧生成带深色描边的圆弧，再按方向旋转：左边缘顺时针 50°，右、上、下边缘
+   顺时针 55°。右、上、下仍由同一姿态以 90° 步进派生；左边缘则从未倾斜的左向
+   基准独立生成。四向素材在旋转后原本各露出约 47 pt，向各自物理屏幕边缘外移动
+   约 24 pt，因此统一使用 30 pt 总压入量，最终露出深度约 23 pt。
+7. 跳出不复用任务完成的 `jump` 庆祝动画。`edge_reveal` 从待机首帧生成一次
+   19 帧的上下弹跳/纵向拉伸，AppKit 使用 PNG 序列，同时输出
+   `animations/edge-reveal.gif` 供预览和跨平台对接。
+8. 多显示器内侧接缝不算桌面外边缘。macOS 用相邻屏幕探针排除接缝；Win32 可用
+   `EnumDisplayMonitors` 做同样判断。
 
 ## 首轮真实使用回归
 

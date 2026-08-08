@@ -7,5 +7,6 @@ build/
 cache/
 dist/
 qa/
+learning-materials/
 pig-pet-error.log
 *.log

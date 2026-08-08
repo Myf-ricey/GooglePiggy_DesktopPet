@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_VERSION = "0.2.3"
+DEFAULT_VERSION = "0.3.0"
 
 ROOT_FILES = (
     ".gitattributes",
@@ -26,6 +26,7 @@ ROOT_FILES = (
     "RELEASE-CHECKLIST.md",
     "RELEASE-NOTES-v0.2.2.md",
     "RELEASE-NOTES-v0.2.3.md",
+    "RELEASE-NOTES-v0.3.0.md",
     "build-macos.sh",
     "build-release.ps1",
     "codex_bridge.py",
@@ -62,6 +63,7 @@ FORBIDDEN_PARTS = {
     "build",
     "cache",
     "dist",
+    "learning-materials",
     "qa",
 }
 

@@ -10,6 +10,17 @@ private let successEffectDuration: TimeInterval = 1.35
 private let dragThreshold: CGFloat = 4
 private let permissionBodyWidth: CGFloat = 260
 private let permissionBodyHeight: CGFloat = 150
+private enum EdgeTransition: Equatable {
+    case hiding
+    case revealing
+}
+
+private struct EdgePlacement {
+    let edge: DesktopEdge
+    let edgeFrame: NSRect
+    let revealFrame: NSRect
+    let tailFrame: NSRect
+}
 
 private func permissionBodyText(_ detail: String) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
@@ -38,6 +49,7 @@ private func permissionBodyMeasuredHeight(_ detail: String) -> CGFloat {
 private struct FrameRecord: Decodable {
     let file: String
     let duration_ms: Int
+    let visible_bounds: [Int]?
 }
 
 private struct AnimationRecord: Decodable {
@@ -133,15 +145,57 @@ final class PetView: NSView {
     }
 }
 
+final class TailView: NSView {
+    unowned let controller: PetController
+
+    init(frame: NSRect, controller: PetController) {
+        self.controller = controller
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        controller.drawEdgeTail(in: bounds)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        controller.handleTailClick()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        controller.showContextMenu(
+            at: convert(event.locationInWindow, from: nil),
+            in: self
+        )
+    }
+}
+
 final class PetController: NSObject, NSApplicationDelegate {
     private var manifest: AnimationManifest?
     private var imageStore: ImageStore?
     private var resourceURL: URL?
     private var window: NSPanel?
     private var petView: PetView?
+    private var tailWindow: NSPanel?
+    private var tailView: TailView?
     private var instanceLock: InstanceLock?
     private var animationTimer: Timer?
     private var isQuitting = false
+    private let startupEdgePreview: DesktopEdge?
 
     private var mode = "responsive"
     private var frameIndex = 0
@@ -166,6 +220,10 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var dragPrevious: VisualSnapshot?
     private var dragCanPlayFlat = false
 
+    private var edgePlacement: EdgePlacement?
+    private var edgeTransition: EdgeTransition?
+    private var revealAfterHiding = false
+
     private var currentKey: String {
         if permissionRequest != nil {
             return "question"
@@ -183,6 +241,23 @@ final class PetController: NSObject, NSApplicationDelegate {
         manifest?.animations[currentKey]
     }
 
+    private var canHideAtDesktopEdge: Bool {
+        canEnterEdgeHide(
+            mode: mode,
+            bridgeStatus: bridgeStatus,
+            hasPermissionRequest: permissionRequest != nil,
+            hasTransientAnimation: transientKey != nil
+        )
+            && edgePlacement == nil
+            && edgeTransition == nil
+    }
+
+    private var activityRequiresVisiblePet: Bool {
+        bridgeStatus == "thinking"
+            || permissionRequest != nil
+            || successEffectStarted != nil
+    }
+
     private var permissionBubbleRect: NSRect {
         NSRect(x: 262, y: 84, width: 296, height: 264)
     }
@@ -192,6 +267,11 @@ final class PetController: NSObject, NSApplicationDelegate {
             "allow": NSRect(x: 300, y: 300, width: 92, height: 32),
             "deny": NSRect(x: 428, y: 300, width: 92, height: 32),
         ]
+    }
+
+    init(startupEdgePreview: DesktopEdge? = nil) {
+        self.startupEdgePreview = startupEdgePreview
+        super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -207,6 +287,11 @@ final class PetController: NSObject, NSApplicationDelegate {
             writeHeartbeat(force: true)
             renderCurrent()
             scheduleCurrent()
+            if let edge = startupEdgePreview {
+                DispatchQueue.main.async { [weak self] in
+                    self?.previewEdgeHide(edge)
+                }
+            }
         } catch {
             presentStartupError(error)
             NSApp.terminate(nil)
@@ -236,7 +321,10 @@ final class PetController: NSObject, NSApplicationDelegate {
             decoded.format_version == 1,
             decoded.window_size == Int(windowSize),
             Set(decoded.animations.keys)
-                == Set(["idle", "left", "carrot", "jump", "flat", "question"])
+                == Set([
+                    "idle", "left", "carrot", "jump", "flat", "question",
+                    "edge_reveal",
+                ])
         else {
             throw NSError(
                 domain: appBundleIdentifier,
@@ -254,6 +342,21 @@ final class PetController: NSObject, NSApplicationDelegate {
                     NSLocalizedDescriptionKey: "An animation has no frames."
                 ]
             )
+        }
+        for edge in DesktopEdge.allCases {
+            let tailURL = resources.appendingPathComponent(
+                "edge-tail/\(edge.rawValue).png"
+            )
+            guard NSImage(contentsOf: tailURL) != nil else {
+                throw NSError(
+                    domain: appBundleIdentifier,
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Edge tail asset is missing: \(edge.rawValue)"
+                    ]
+                )
+            }
         }
         resourceURL = resources
         manifest = decoded
@@ -298,6 +401,47 @@ final class PetController: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
         window = panel
         petView = view
+
+        let tailPanel = NSPanel(
+            contentRect: NSRect(
+                origin: .zero,
+                size: NSSize(
+                    width: EdgeHidePolicy.tailWindowSize,
+                    height: EdgeHidePolicy.tailWindowSize
+                )
+            ),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        tailPanel.title = "\(appDisplayName) · 隐藏"
+        tailPanel.isOpaque = false
+        tailPanel.backgroundColor = .clear
+        tailPanel.hasShadow = false
+        // The tail is anchored to the physical display edge, including areas
+        // occupied by the Dock/menu bar, so keep its small click target above
+        // those system windows while the full pet remains at `.floating`.
+        tailPanel.level = .statusBar
+        tailPanel.hidesOnDeactivate = false
+        tailPanel.becomesKeyOnlyIfNeeded = true
+        tailPanel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+        ]
+        tailPanel.isReleasedWhenClosed = false
+        let edgeView = TailView(
+            frame: NSRect(
+                x: 0,
+                y: 0,
+                width: EdgeHidePolicy.tailWindowSize,
+                height: EdgeHidePolicy.tailWindowSize
+            ),
+            controller: self
+        )
+        tailPanel.contentView = edgeView
+        tailPanel.orderOut(nil)
+        tailWindow = tailPanel
+        tailView = edgeView
     }
 
     private func presentStartupError(_ error: Error) {
@@ -324,6 +468,344 @@ final class PetController: NSObject, NSApplicationDelegate {
             frameIndex = 0
         }
         return animation.frames[frameIndex]
+    }
+
+    private func currentPetLocalBounds() -> NSRect {
+        guard
+            let values = currentFrameRecord()?.visible_bounds,
+            values.count == 4,
+            values[2] > values[0],
+            values[3] > values[1]
+        else {
+            // Compatibility fallback for locally cached pre-edge-hide manifests.
+            return NSRect(x: 300, y: 375, width: 200, height: 210)
+        }
+        return NSRect(
+            x: CGFloat(values[0]),
+            y: CGFloat(values[1]),
+            width: CGFloat(values[2] - values[0]),
+            height: CGFloat(values[3] - values[1])
+        )
+    }
+
+    private func currentContentLocalBounds() -> NSRect {
+        var result = currentPetLocalBounds()
+        if permissionRequest != nil {
+            // Include the bubble pointer so an automatic work reveal never
+            // leaves an actionable permission prompt behind an edge.
+            let bubbleWithPointer = NSRect(
+                x: permissionBubbleRect.minX,
+                y: permissionBubbleRect.minY,
+                width: permissionBubbleRect.width,
+                height: permissionBubbleRect.height + 25
+            )
+            result = result.union(bubbleWithPointer)
+        }
+        return result
+    }
+
+    private func screenBounds(for localBounds: NSRect) -> NSRect? {
+        guard let window else {
+            return nil
+        }
+        // Animation metadata is top-left based; AppKit screen Y points upward.
+        return NSRect(
+            x: window.frame.minX + localBounds.minX,
+            y: window.frame.maxY - localBounds.maxY,
+            width: localBounds.width,
+            height: localBounds.height
+        )
+    }
+
+    private func bottomRevealDrop(for edge: DesktopEdge) -> CGFloat {
+        guard edge == .bottom else {
+            return 0
+        }
+        let petHeight = screenBounds(for: currentPetLocalBounds())?.height
+            ?? currentPetLocalBounds().height
+        return petHeight * EdgeHidePolicy.bottomRevealDropHeightMultiplier
+    }
+
+    private func settleRevealedWindow(for placement: EdgePlacement) {
+        guard
+            let window,
+            let contentFrame = screenBounds(for: currentContentLocalBounds())
+        else {
+            return
+        }
+        let correction = revealedDelta(
+            edge: placement.edge,
+            contentFrame: contentFrame,
+            desktopFrame: placement.revealFrame,
+            bottomDrop: bottomRevealDrop(for: placement.edge)
+        )
+        guard abs(correction.x) >= 0.5 || abs(correction.y) >= 0.5 else {
+            return
+        }
+        window.setFrameOrigin(NSPoint(
+            x: window.frame.origin.x + correction.x,
+            y: window.frame.origin.y + correction.y
+        ))
+    }
+
+    private func interactionScreen() -> NSScreen? {
+        let cursor = NSEvent.mouseLocation
+        if let underCursor = NSScreen.screens.first(where: {
+            $0.frame.contains(cursor)
+        }) {
+            return underCursor
+        }
+        if let screen = window?.screen {
+            return screen
+        }
+        guard let petFrame = screenBounds(for: currentPetLocalBounds()) else {
+            return NSScreen.main
+        }
+        return NSScreen.screens.max(by: { lhs, rhs in
+            let leftIntersection = lhs.frame.intersection(petFrame)
+            let rightIntersection = rhs.frame.intersection(petFrame)
+            let leftArea = leftIntersection.isNull
+                ? 0 : leftIntersection.width * leftIntersection.height
+            let rightArea = rightIntersection.isNull
+                ? 0 : rightIntersection.width * rightIntersection.height
+            return leftArea < rightArea
+        }) ?? NSScreen.main
+    }
+
+    private func exposedEdges(
+        of screen: NSScreen,
+        near petFrame: NSRect
+    ) -> Set<DesktopEdge> {
+        let physicalFrame = screen.frame
+        let probeOffset: CGFloat = 2
+        let probeX = min(
+            max(petFrame.midX, physicalFrame.minX + 1),
+            physicalFrame.maxX - 1
+        )
+        let probeY = min(
+            max(petFrame.midY, physicalFrame.minY + 1),
+            physicalFrame.maxY - 1
+        )
+        let probes: [DesktopEdge: NSPoint] = [
+            .left: NSPoint(
+                x: physicalFrame.minX - probeOffset,
+                y: probeY
+            ),
+            .right: NSPoint(
+                x: physicalFrame.maxX + probeOffset,
+                y: probeY
+            ),
+            .bottom: NSPoint(
+                x: probeX,
+                y: physicalFrame.minY - probeOffset
+            ),
+            .top: NSPoint(
+                x: probeX,
+                y: physicalFrame.maxY + probeOffset
+            ),
+        ]
+        let otherFrames = NSScreen.screens.compactMap { candidate -> NSRect? in
+            candidate === screen ? nil : candidate.frame.insetBy(dx: -1, dy: -1)
+        }
+        return Set(DesktopEdge.allCases.filter { edge in
+            guard let probe = probes[edge] else {
+                return false
+            }
+            return !otherFrames.contains(where: { $0.contains(probe) })
+        })
+    }
+
+    private func animateWindow(
+        to origin: NSPoint,
+        completion: @escaping () -> Void
+    ) {
+        guard let window else {
+            completion()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = EdgeHidePolicy.transitionDuration
+            context.allowsImplicitAnimation = true
+            window.animator().setFrameOrigin(origin)
+        } completionHandler: {
+            DispatchQueue.main.async(execute: completion)
+        }
+    }
+
+    @discardableResult
+    private func beginEdgeHideIfNeeded(
+        forcedEdge: DesktopEdge? = nil,
+        forcedScreen: NSScreen? = nil
+    ) -> Bool {
+        guard
+            canHideAtDesktopEdge,
+            let window,
+            let petFrame = screenBounds(for: currentPetLocalBounds()),
+            let screen = forcedScreen ?? interactionScreen()
+        else {
+            return false
+        }
+        let edgeFrame = screen.frame
+        let revealFrame = screen.visibleFrame
+        let allowedEdges = exposedEdges(of: screen, near: petFrame)
+        let edge = forcedEdge ?? touchedDesktopEdge(
+            petFrame: petFrame,
+            desktopFrame: edgeFrame,
+            allowedEdges: allowedEdges
+        )
+        guard let edge else {
+            return false
+        }
+
+        let placement = EdgePlacement(
+            edge: edge,
+            edgeFrame: edgeFrame,
+            revealFrame: revealFrame,
+            tailFrame: tailWindowFrame(
+                edge: edge,
+                petFrame: petFrame,
+                desktopFrame: edgeFrame
+            )
+        )
+        edgePlacement = placement
+        edgeTransition = .hiding
+        revealAfterHiding = false
+        successEffectStarted = nil
+        switchVisual("edge_reveal", once: true)
+
+        guard let movingPetFrame = screenBounds(for: currentPetLocalBounds()) else {
+            edgePlacement = nil
+            edgeTransition = nil
+            return false
+        }
+        let delta = offscreenDelta(
+            edge: edge,
+            petFrame: movingPetFrame,
+            desktopFrame: edgeFrame
+        )
+        let target = NSPoint(
+            x: window.frame.origin.x + delta.x,
+            y: window.frame.origin.y + delta.y
+        )
+        animateWindow(to: target) { [weak self] in
+            guard
+                let self,
+                self.edgeTransition == .hiding,
+                self.edgePlacement?.edge == placement.edge
+            else {
+                return
+            }
+            self.edgeTransition = nil
+            if self.revealAfterHiding || self.activityRequiresVisiblePet {
+                self.revealAfterHiding = false
+                _ = self.beginEdgeReveal(playRevealAnimation: false)
+                return
+            }
+            self.window?.orderOut(nil)
+            self.tailWindow?.setFrame(placement.tailFrame, display: true)
+            self.tailView?.needsDisplay = true
+            self.tailWindow?.orderFrontRegardless()
+            self.writeHeartbeat(force: true)
+        }
+        return true
+    }
+
+    private func previewEdgeHide(_ edge: DesktopEdge) {
+        guard
+            canHideAtDesktopEdge,
+            let screen = NSScreen.main,
+            let window,
+            let petFrame = screenBounds(for: currentPetLocalBounds())
+        else {
+            return
+        }
+        let frame = screen.frame
+        var delta = NSPoint.zero
+        switch edge {
+        case .left:
+            delta.x = frame.minX - petFrame.minX
+            delta.y = frame.midY - petFrame.midY
+        case .right:
+            delta.x = frame.maxX - petFrame.maxX
+            delta.y = frame.midY - petFrame.midY
+        case .bottom:
+            delta.x = frame.midX - petFrame.midX
+            delta.y = frame.minY - petFrame.minY
+        case .top:
+            delta.x = frame.midX - petFrame.midX
+            delta.y = frame.maxY - petFrame.maxY
+        }
+        window.setFrameOrigin(NSPoint(
+            x: window.frame.origin.x + delta.x,
+            y: window.frame.origin.y + delta.y
+        ))
+        _ = beginEdgeHideIfNeeded(
+            forcedEdge: edge,
+            forcedScreen: screen
+        )
+    }
+
+    @discardableResult
+    private func beginEdgeReveal(playRevealAnimation: Bool) -> Bool {
+        guard let placement = edgePlacement else {
+            return false
+        }
+        if edgeTransition == .hiding {
+            revealAfterHiding = true
+            return true
+        }
+        if edgeTransition == .revealing {
+            return false
+        }
+        guard let window else {
+            return false
+        }
+
+        edgeTransition = .revealing
+        revealAfterHiding = false
+        tailWindow?.orderOut(nil)
+        if playRevealAnimation {
+            successEffectStarted = nil
+            switchVisual("edge_reveal", once: true)
+        }
+        window.orderFrontRegardless()
+        guard let contentFrame = screenBounds(for: currentContentLocalBounds()) else {
+            edgePlacement = nil
+            edgeTransition = nil
+            return false
+        }
+        let delta = revealedDelta(
+            edge: placement.edge,
+            contentFrame: contentFrame,
+            desktopFrame: placement.revealFrame,
+            bottomDrop: bottomRevealDrop(for: placement.edge)
+        )
+        let target = NSPoint(
+            x: window.frame.origin.x + delta.x,
+            y: window.frame.origin.y + delta.y
+        )
+        animateWindow(to: target) { [weak self] in
+            guard let self, self.edgeTransition == .revealing else {
+                return
+            }
+            _ = self.pollBridge(force: true)
+            self.settleRevealedWindow(for: placement)
+            self.edgePlacement = nil
+            self.edgeTransition = nil
+            self.revealAfterHiding = false
+            self.renderCurrent()
+            self.scheduleCurrent()
+            self.writeHeartbeat(force: true)
+        }
+        return true
+    }
+
+    @discardableResult
+    private func revealForActivityIfNeeded() -> Bool {
+        guard edgePlacement != nil, activityRequiresVisiblePet else {
+            return false
+        }
+        return beginEdgeReveal(playRevealAnimation: false)
     }
 
     private func renderCurrent() {
@@ -514,9 +996,11 @@ final class PetController: NSObject, NSApplicationDelegate {
             return false
         }
         lastStatusPoll = now
-        return applyBridgePayload(
+        let visualChanged = applyBridgePayload(
             readJSONDictionary(defaultStatusURL()) ?? [:]
         )
+        let startedReveal = revealForActivityIfNeeded()
+        return visualChanged || startedReveal
     }
 
     private func writeHeartbeat(force: Bool = false) {
@@ -539,6 +1023,21 @@ final class PetController: NSObject, NSApplicationDelegate {
                 frame.minX, frame.minY, frame.maxX, frame.maxY,
             ]
             heartbeat["window_visible"] = window.isVisible
+        }
+        if let placement = edgePlacement {
+            heartbeat["presentation"] = edgeTransition == .hiding
+                ? "hiding"
+                : edgeTransition == .revealing ? "revealing" : "hidden"
+            heartbeat["hidden_edge"] = placement.edge.rawValue
+        } else {
+            heartbeat["presentation"] = "visible"
+        }
+        heartbeat["tail_visible"] = tailWindow?.isVisible == true
+        if let tailWindow {
+            let frame = tailWindow.frame
+            heartbeat["tail_rect"] = [
+                frame.minX, frame.minY, frame.maxX, frame.maxY,
+            ]
         }
         try? writeJSONAtomic(heartbeat, to: heartbeatURL())
     }
@@ -564,6 +1063,29 @@ final class PetController: NSObject, NSApplicationDelegate {
         if permissionRequest != nil {
             drawPermissionBubble()
         }
+    }
+
+    func drawEdgeTail(in bounds: NSRect) {
+        guard
+            let edge = edgePlacement?.edge,
+            let image = imageStore?.image(
+                relativePath: "edge-tail/\(edge.rawValue).png"
+            )
+        else {
+            return
+        }
+        image.draw(
+            in: bounds,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+    }
+
+    func handleTailClick() {
+        _ = beginEdgeReveal(playRevealAnimation: true)
     }
 
     private func drawImage(
@@ -778,6 +1300,9 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseDown(point: NSPoint) {
+        guard edgePlacement == nil, edgeTransition == nil else {
+            return
+        }
         if permissionRequest != nil {
             if let action = permissionButtons.first(where: {
                 $0.value.contains(point)
@@ -876,6 +1401,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             _ = pollBridge(force: true)
             renderCurrent()
             scheduleCurrent()
+            _ = beginEdgeHideIfNeeded()
         } else if canPlayFlat {
             switchVisual("flat", once: true)
         }
@@ -958,6 +1484,13 @@ final class PetController: NSObject, NSApplicationDelegate {
         guard !isQuitting, let window else {
             return
         }
+        if edgePlacement != nil, edgeTransition == nil {
+            window.orderOut(nil)
+            tailWindow?.orderFrontRegardless()
+            tailView?.needsDisplay = true
+            writeHeartbeat(force: true)
+            return
+        }
         window.orderFrontRegardless()
         renderCurrent()
         scheduleCurrent()
@@ -974,6 +1507,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         successEffectStarted = nil
         frameIndex = 0
         _ = pollBridge(force: true)
+        _ = beginEdgeReveal(playRevealAnimation: false)
         renderCurrent()
         scheduleCurrent()
     }
@@ -1008,6 +1542,159 @@ final class PetController: NSObject, NSApplicationDelegate {
 }
 
 func runManifestSelfTest() throws {
+    let desktopFixture = NSRect(x: 0, y: 0, width: 1000, height: 800)
+    let safeFixture = NSRect(x: 0, y: 80, width: 1000, height: 680)
+    guard
+        touchedDesktopEdge(
+            petFrame: NSRect(x: 300, y: 300, width: 150, height: 120),
+            desktopFrame: desktopFixture
+        ) == nil,
+        canEnterEdgeHide(
+            mode: "responsive",
+            bridgeStatus: "idle",
+            hasPermissionRequest: false,
+            hasTransientAnimation: false
+        ),
+        !canEnterEdgeHide(
+            mode: "responsive",
+            bridgeStatus: "thinking",
+            hasPermissionRequest: false,
+            hasTransientAnimation: false
+        ),
+        !canEnterEdgeHide(
+            mode: "responsive",
+            bridgeStatus: "idle",
+            hasPermissionRequest: true,
+            hasTransientAnimation: false
+        )
+    else {
+        throw NSError(
+            domain: appBundleIdentifier,
+            code: 25,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Desktop edge contact test failed."
+            ]
+        )
+    }
+
+    let edgeFixtures: [(DesktopEdge, NSRect)] = [
+        (.left, NSRect(x: -2, y: 300, width: 150, height: 120)),
+        (.right, NSRect(x: 852, y: 300, width: 150, height: 120)),
+        (.bottom, NSRect(x: 400, y: -2, width: 150, height: 120)),
+        (.top, NSRect(x: 400, y: 682, width: 150, height: 120)),
+    ]
+    for (edge, contactFrame) in edgeFixtures {
+        let hideDelta = offscreenDelta(
+            edge: edge,
+            petFrame: contactFrame,
+            desktopFrame: desktopFixture
+        )
+        let hiddenFrame = contactFrame.offsetBy(
+            dx: hideDelta.x,
+            dy: hideDelta.y
+        )
+        let bottomDrop = edge == .bottom
+            ? contactFrame.height
+                * EdgeHidePolicy.bottomRevealDropHeightMultiplier
+            : 0
+        let revealDelta = revealedDelta(
+            edge: edge,
+            contentFrame: hiddenFrame,
+            desktopFrame: safeFixture,
+            bottomDrop: bottomDrop
+        )
+        let revealedFrame = hiddenFrame.offsetBy(
+            dx: revealDelta.x,
+            dy: revealDelta.y
+        )
+        let tailFixture = tailWindowFrame(
+            edge: edge,
+            petFrame: contactFrame,
+            desktopFrame: desktopFixture
+        )
+        let hiddenCorrectly: Bool
+        let revealedCorrectly: Bool
+        let revealedContainmentCorrectly: Bool
+        let tailAnchored: Bool
+        switch edge {
+        case .left:
+            hiddenCorrectly = hiddenFrame.maxX
+                <= desktopFixture.minX - EdgeHidePolicy.offscreenPadding
+            revealedCorrectly = abs(
+                revealedFrame.minX
+                    - safeFixture.minX
+                    - EdgeHidePolicy.revealClearance
+            ) < 0.01
+            revealedContainmentCorrectly = safeFixture.insetBy(
+                dx: EdgeHidePolicy.revealClearance,
+                dy: EdgeHidePolicy.revealClearance
+            ).contains(revealedFrame)
+            tailAnchored = tailFixture.minX
+                == desktopFixture.minX - EdgeHidePolicy.tailScreenOverlap
+        case .right:
+            hiddenCorrectly = hiddenFrame.minX
+                >= desktopFixture.maxX + EdgeHidePolicy.offscreenPadding
+            revealedCorrectly = abs(
+                safeFixture.maxX
+                    - revealedFrame.maxX
+                    - EdgeHidePolicy.revealClearance
+            ) < 0.01
+            revealedContainmentCorrectly = safeFixture.insetBy(
+                dx: EdgeHidePolicy.revealClearance,
+                dy: EdgeHidePolicy.revealClearance
+            ).contains(revealedFrame)
+            tailAnchored = tailFixture.maxX
+                == desktopFixture.maxX + EdgeHidePolicy.tailScreenOverlap
+        case .bottom:
+            hiddenCorrectly = hiddenFrame.maxY
+                <= desktopFixture.minY - EdgeHidePolicy.offscreenPadding
+            revealedCorrectly = abs(
+                revealedFrame.maxY
+                    - safeFixture.minY
+                    - EdgeHidePolicy.revealClearance
+            ) < 0.01
+            revealedContainmentCorrectly = desktopFixture.intersects(
+                revealedFrame
+            )
+            tailAnchored = tailFixture.minY
+                == desktopFixture.minY - EdgeHidePolicy.tailScreenOverlap
+        case .top:
+            hiddenCorrectly = hiddenFrame.minY
+                >= desktopFixture.maxY + EdgeHidePolicy.offscreenPadding
+            revealedCorrectly = abs(
+                safeFixture.maxY
+                    - revealedFrame.maxY
+                    - EdgeHidePolicy.revealClearance
+            ) < 0.01
+            revealedContainmentCorrectly = safeFixture.insetBy(
+                dx: EdgeHidePolicy.revealClearance,
+                dy: EdgeHidePolicy.revealClearance
+            ).contains(revealedFrame)
+            tailAnchored = tailFixture.maxY
+                == desktopFixture.maxY + EdgeHidePolicy.tailScreenOverlap
+        }
+        guard
+            touchedDesktopEdge(
+                petFrame: contactFrame,
+                desktopFrame: desktopFixture
+            ) == edge,
+            hiddenCorrectly,
+            revealedCorrectly,
+            revealedContainmentCorrectly,
+            tailAnchored,
+            desktopFixture.intersects(tailFixture)
+        else {
+            throw NSError(
+                domain: appBundleIdentifier,
+                code: 26,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Desktop edge placement test failed: \(edge.rawValue)"
+                ]
+            )
+        }
+    }
+
     let permissionFixture = """
     Codex 准备在“/Users/示例用户/Documents/桌宠猪 Window→Mac”中：修改“README-MAC.md”；修改“README.md”；修改“MACOS-PORTING.md”；修改“RELEASE-NOTES-v0.2.3.md”；修改“RELEASE-CHECKLIST.md”；修改“RELEASE-CHECKLIST-MAC.md”，是否允许？
     """
@@ -1034,6 +1721,7 @@ func runManifestSelfTest() throws {
     let manifest = try JSONDecoder().decode(AnimationManifest.self, from: data)
     let expected: Set<String> = [
         "idle", "left", "carrot", "jump", "flat", "question",
+        "edge_reveal",
     ]
     guard
         manifest.format_version == 1,
@@ -1044,7 +1732,8 @@ func runManifestSelfTest() throws {
         manifest.animations["carrot"]?.frames.count == 19,
         manifest.animations["jump"]?.frames.count == 61,
         manifest.animations["flat"]?.frames.count == 96,
-        manifest.animations["question"]?.frames.count == 25
+        manifest.animations["question"]?.frames.count == 25,
+        manifest.animations["edge_reveal"]?.frames.count == 19
     else {
         throw NSError(
             domain: appBundleIdentifier,
@@ -1057,6 +1746,11 @@ func runManifestSelfTest() throws {
             let url = resources.appendingPathComponent(frame.file)
             guard
                 frame.duration_ms >= 20,
+                frame.visible_bounds?.count == 4,
+                (frame.visible_bounds?[0] ?? -1) >= 0,
+                (frame.visible_bounds?[1] ?? -1) >= 0,
+                (frame.visible_bounds?[2] ?? 641) <= 640,
+                (frame.visible_bounds?[3] ?? 641) <= 640,
                 FileManager.default.fileExists(atPath: url.path),
                 NSImage(contentsOf: url) != nil
             else {
@@ -1069,6 +1763,20 @@ func runManifestSelfTest() throws {
                 )
             }
         }
+    }
+    let edgeRevealGIF = resources.appendingPathComponent(
+        "animations/edge-reveal.gif"
+    )
+    let edgeRevealHeader = (try? Data(contentsOf: edgeRevealGIF).prefix(6))
+        .flatMap { String(data: $0, encoding: .ascii) }
+    guard edgeRevealHeader?.hasPrefix("GIF") == true else {
+        throw NSError(
+            domain: appBundleIdentifier,
+            code: 28,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Edge reveal GIF is missing."
+            ]
+        )
     }
     guard
         FileManager.default.fileExists(
@@ -1087,6 +1795,28 @@ func runManifestSelfTest() throws {
             code: 23,
             userInfo: [NSLocalizedDescriptionKey: "Celebration effects are missing."]
         )
+    }
+    for edge in DesktopEdge.allCases {
+        let tailURL = resources.appendingPathComponent(
+            "edge-tail/\(edge.rawValue).png"
+        )
+        guard
+            FileManager.default.fileExists(atPath: tailURL.path),
+            let image = NSImage(contentsOf: tailURL),
+            image.size == NSSize(
+                width: EdgeHidePolicy.tailWindowSize,
+                height: EdgeHidePolicy.tailWindowSize
+            )
+        else {
+            throw NSError(
+                domain: appBundleIdentifier,
+                code: 27,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Edge tail validation failed: \(edge.rawValue)"
+                ]
+            )
+        }
     }
     print("macos_manifest_test=ok")
 }

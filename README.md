@@ -1,16 +1,23 @@
 # GooglePiggy Desktop Pet
 
-一只会陪你和 Codex 一起工作的 Windows / macOS 桌面小猪。
+一只会陪你和 Codex 一起工作的 Windows / macOS 桌面小猪。它会根据 Codex 的
+状态切换动作，也能在你暂时不需要它时悄悄躲进屏幕边缘。
 
 它不是简单贴在屏幕上的静态图片，而是一个透明置顶的小桌宠：平时轻轻呼吸，拖动时会左拱，点一下会躺平；当 Codex 正在工作时，它会追胡萝卜；任务完成时，它会跳起来庆祝，还会撒一点亮晶晶和小烟花。遇到 Codex 权限请求时，它会变成疑问猪，在头顶弹出允许/拒绝气泡，并把选择传回 Codex。
 
-这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它被整理成了一个可以开源、可以安装、可以继续改造的完整跨平台小工具。
+这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它已经被
+整理成可以直接安装、自由修改，并能继续扩展到不同桌面平台的开源小工具。
+
+> **当前版本：`v0.3.0`。** 本次发布只更新 macOS：新增空闲触边隐藏和点尾跳回。
+> Windows 版暂时保持 `v0.2.3` 的功能，后续会单独更新。
 
 ## Features
 
 - Idle: 循环播放很轻微的呼吸动画。
 - Left click: 没有其他动作时，播放一次躺平动画。
 - Dragging: 拖动猪猪时播放左拱动画。
+- Edge hiding (macOS): 空闲时拖到屏幕外边缘，猪猪会跳进去，只露出可点击的小尾巴；
+  点一下尾巴就会跳回。工作、权限请求和完成状态会自动保持或恢复可见。
 - Codex thinking: Codex 工作或思考时，播放追胡萝卜动画。
 - Codex success: Codex 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
 - Codex permission: Codex 请求权限时，播放疑问猪，并显示允许/拒绝气泡。
@@ -23,9 +30,9 @@
 
 | Item | Status |
 | --- | --- |
-| Windows 10/11 x64 | Supported |
-| macOS 13+ Apple Silicon | Supported |
-| macOS 13+ Intel | Supported |
+| Windows 10/11 x64 | Supported (`v0.2.3`) |
+| macOS 13+ Apple Silicon | Supported (`v0.3.0`) |
+| macOS 13+ Intel | Supported (`v0.3.0`) |
 | Portable ZIP | Supported |
 | macOS DMG | Supported |
 | Python source run | Python 3.11+, tested with Python 3.13 |
@@ -105,6 +112,7 @@ Codex 不会自动运行新写入的用户 Hook。首次安装后必须完成一
 - 给 Codex 发送一条新任务：思考时猪猪追胡萝卜，完成时跳跃庆祝。
 - 单击猪猪：播放一次躺平动画。
 - 按住并拖动：播放左拱动画并移动猪猪。
+- 空闲时拖到任一屏幕外边缘：猪猪会跳进屏幕，只留下尾巴；单击尾巴即可跳回。
 - 右键猪猪：切换联动模式、预览动作、开关自启动或退出。
 - Codex 请求权限：气泡会完整换行显示摘要，可在猪猪上点击“允许”或“拒绝”。
 
@@ -324,11 +332,13 @@ This repository includes:
 .github/workflows/macos-release.yml
 ```
 
-You can manually run `Build Windows release` in GitHub Actions, or create a tag to build and attach the ZIP to a GitHub Release:
+You can manually run either release workflow in GitHub Actions. A regular `v*` tag normally
+builds both platforms. For a platform-only release such as `v0.3.0`, build and verify that
+platform locally, then upload only its artifacts to the GitHub Release.
 
 ```powershell
-git tag v0.2.3
-git push origin v0.2.3
+git tag vNEXT
+git push origin vNEXT
 ```
 
 ## Project Structure
@@ -364,6 +374,7 @@ git push origin v0.2.3
 ├─ README-MAC.md
 ├─ RELEASE-NOTES-v0.2.2.md
 ├─ RELEASE-NOTES-v0.2.3.md
+├─ RELEASE-NOTES-v0.3.0.md
 └─ GITHUB-UPLOAD-GUIDE.md
 ```
 

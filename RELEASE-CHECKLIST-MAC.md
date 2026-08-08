@@ -82,4 +82,8 @@ GooglePiggy-macos-x64.dmg
   brightness produce explicit Chinese requests.
 - Install over a running older copy and confirm the old process exits and the new version
   starts.
+- While idle, drag the pet to every physical desktop edge and confirm it hides with only the
+  outlined tail visible; internal seams between monitors must not trigger hiding.
+- Click every tail and confirm the pet reveals without success fireworks. Start a Codex task
+  while hidden and confirm the pet reveals automatically in the correct working state.
 - Publish `README-MAC.md` with the release.
