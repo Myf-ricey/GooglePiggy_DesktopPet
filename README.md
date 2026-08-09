@@ -8,17 +8,18 @@
 这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它已经被
 整理成可以直接安装、自由修改，并能继续扩展到不同桌面平台的开源小工具。
 
-> **当前版本：`v0.3.1`。** 本次更新补齐 Windows 端空闲触边隐藏和点尾跳回；
-> macOS 端继续保留 `v0.3.0` 的原生实现。
+> **当前版本：`v0.3.2`。** Windows 和 macOS 现在都支持完整的空闲触边隐藏、尾巴
+> 进出动画和点尾跳回；两端使用一致的边缘交互规则。
 
 ## Features
 
 - Idle: 循环播放很轻微的呼吸动画。
 - Left click: 没有其他动作时，播放一次躺平动画。
 - Dragging: 拖动猪猪时播放左拱动画。
-- Edge hiding (Windows / macOS): 空闲时拖到屏幕外边缘，猪猪会跳进去，只露出可点击的
-  小尾巴；点一下尾巴就会跳回。Windows 和 macOS 都只对物理外边缘生效，内部显示器
-  接缝不会误触发；工作、权限请求和完成状态会自动保持或恢复可见。
+- Edge hiding (Windows / macOS): 空闲时拖到屏幕外边缘，猪猪会用平滑的短暂进出动画
+  收进屏幕，只露出可点击的小尾巴；点一下尾巴就会沿同样的节奏滑回。Windows 和
+  macOS 都只对物理外边缘生效，内部显示器接缝不会误触发；工作、权限请求和完成状态
+  会自动保持或恢复可见。
 - Codex thinking: Codex 工作或思考时，播放追胡萝卜动画。
 - Codex success: Codex 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
 - Codex permission: Codex 请求权限时，播放疑问猪，并显示允许/拒绝气泡。
@@ -31,9 +32,9 @@
 
 | Item | Status |
 | --- | --- |
-| Windows 10/11 x64 | Supported (`v0.3.1`, including edge hiding) |
-| macOS 13+ Apple Silicon | Supported (`v0.3.0`) |
-| macOS 13+ Intel | Supported (`v0.3.0`) |
+| Windows 10/11 x64 | Supported (`v0.3.2`, including tail edge hiding) |
+| macOS 13+ Apple Silicon | Supported (`v0.3.2`, including tail edge hiding) |
+| macOS 13+ Intel | Supported (`v0.3.2`, including tail edge hiding) |
 | Portable ZIP | Supported |
 | macOS DMG | Supported |
 | Python source run | Python 3.11+, tested with Python 3.13 |
@@ -70,9 +71,13 @@ macOS runtime state is stored under:
 优先从 GitHub Releases 下载通用包，它同时支持 Apple Silicon 与 Intel：
 
 ```text
-GooglePiggy-macos-universal.zip # Apple Silicon + Intel
+GooglePiggy-macos-universal-v0.3.2.zip # Apple Silicon + Intel
 GooglePiggy-macos-universal.dmg
 ```
+
+仓库中也提供了已验证的完整 Mac 便携包：
+
+[GooglePiggy-macos-universal-v0.3.2.zip](releases/GooglePiggy-macos-universal-v0.3.2.zip)
 
 GitHub Actions 也会生成较小的单架构包：
 
@@ -354,7 +359,7 @@ This repository includes:
 ```
 
 You can manually run either release workflow in GitHub Actions. A regular `v*` tag normally
-builds both platforms. For a platform-only release such as `v0.3.0`, build and verify that
+builds both platforms. For a platform-only release such as `v0.3.2`, build and verify that
 platform locally, then upload only its artifacts to the GitHub Release.
 
 ```powershell
@@ -384,6 +389,9 @@ git push origin vNEXT
 │  ├─ prepare_edge_tail_assets.py
 │  ├─ runtime_edge_smoke.py
 │  └─ smoke_test.py
+├─ releases/              # locally verified portable release packages
+│  ├─ GifPigDesktopPet-windows-x64.zip
+│  └─ GooglePiggy-macos-universal-v0.3.2.zip
 ├─ pig_pet.py
 ├─ macos/                  # native Swift/AppKit runtime and installer scripts
 ├─ build-macos.sh
@@ -396,6 +404,7 @@ git push origin vNEXT
 ├─ requirements-dev.txt
 ├─ requirements-macos-build.txt
 ├─ README-MAC.md
+├─ RELEASE-NOTES-v0.3.2.md
 ├─ RELEASE-NOTES-v0.3.1.md
 ├─ RELEASE-NOTES-v0.2.2.md
 ├─ RELEASE-NOTES-v0.2.3.md

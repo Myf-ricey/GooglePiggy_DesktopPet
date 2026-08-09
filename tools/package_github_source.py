@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_VERSION = "0.3.0"
+DEFAULT_VERSION = "0.3.2"
 
 ROOT_FILES = (
     ".gitattributes",
@@ -27,6 +27,7 @@ ROOT_FILES = (
     "RELEASE-NOTES-v0.2.2.md",
     "RELEASE-NOTES-v0.2.3.md",
     "RELEASE-NOTES-v0.3.0.md",
+    "RELEASE-NOTES-v0.3.2.md",
     "build-macos.sh",
     "build-release.ps1",
     "codex_bridge.py",

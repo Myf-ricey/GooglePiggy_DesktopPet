@@ -8,6 +8,8 @@ enum EdgeHidePolicy {
     static let revealClearance: CGFloat = 28
     static let offscreenPadding: CGFloat = 16
     static let transitionDuration: TimeInterval = 0.48
+    /// Match the Windows port's timer-driven 60 Hz edge motion.
+    static let motionFrameInterval: TimeInterval = 1.0 / 60.0
     static let tailWindowSize: CGFloat = 68
     /// Leaves about 23 pt of the rounded tail art visible on every edge.
     static let tailScreenOverlap: CGFloat = 30
@@ -20,6 +22,14 @@ enum DesktopEdge: String, CaseIterable {
     case right
     case top
     case bottom
+}
+
+/// Cubic smoothstep used by both halves of an edge transition. Keeping this
+/// outside the controller makes the motion curve easy to self-test and keeps
+/// it identical to the Windows implementation.
+func edgeMotionEasedProgress(_ progress: CGFloat) -> CGFloat {
+    let clamped = min(1, max(0, progress))
+    return clamped * clamped * (3 - 2 * clamped)
 }
 
 /// The shared state gate for entering edge-hidden mode.

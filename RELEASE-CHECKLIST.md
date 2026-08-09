@@ -1,6 +1,6 @@
 # Cross-platform Release Checklist
 
-Use this checklist before publishing GooglePiggy `v0.3.1` or a later release.
+Use this checklist before publishing GooglePiggy `v0.3.2` or a later release.
 
 ## 1. Source package
 
@@ -14,7 +14,7 @@ Use this checklist before publishing GooglePiggy `v0.3.1` or a later release.
 The prepared source overlay is:
 
 ```text
-GooglePiggy-GitHub-source-v0.2.3.zip
+GooglePiggy-GitHub-source-v0.3.2.zip
 ```
 
 Extract it into a clone of the existing Windows repository and replace files with the
@@ -100,10 +100,10 @@ Commit the source overlay only after reviewing it. A `v*` tag starts both workfl
 .github/workflows/macos-release.yml
 ```
 
-Recommended tag for the cross-platform baseline:
+Recommended tag for the cross-platform tail-hiding baseline:
 
 ```text
-v0.2.3
+v0.3.2
 ```
 
 For the Windows edge-hiding follow-up, review and upload the verified artifact:
@@ -112,17 +112,17 @@ For the Windows edge-hiding follow-up, review and upload the verified artifact:
 releases/GifPigDesktopPet-windows-x64.zip
 ```
 
-The companion description is `RELEASE-NOTES-v0.3.1.md`.
+The companion description is `RELEASE-NOTES-v0.3.2.md`.
 
 Attach these locally verified universal Mac assets to the GitHub Release:
 
 ```text
-GooglePiggy-macos-universal.zip
+GooglePiggy-macos-universal-v0.3.2.zip
 GooglePiggy-macos-universal.dmg
 ```
 
 The workflows additionally produce Windows x64, macOS arm64, and macOS x64 assets.
-Use `RELEASE-NOTES-v0.2.3.md` as the starting release description.
+Use `RELEASE-NOTES-v0.3.2.md` as the release description.
 
 ## 5. Public-release polish
 

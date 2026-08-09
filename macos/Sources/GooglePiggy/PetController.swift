@@ -15,6 +15,13 @@ private enum EdgeTransition: Equatable {
     case revealing
 }
 
+private struct EdgeMotion {
+    let start: NSPoint
+    let target: NSPoint
+    let startedAt: TimeInterval
+    let completion: () -> Void
+}
+
 private struct EdgePlacement {
     let edge: DesktopEdge
     let edgeFrame: NSRect
@@ -194,6 +201,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var tailView: TailView?
     private var instanceLock: InstanceLock?
     private var animationTimer: Timer?
+    private var edgeMotionTimer: Timer?
     private var isQuitting = false
     private let startupEdgePreview: DesktopEdge?
 
@@ -223,6 +231,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var edgePlacement: EdgePlacement?
     private var edgeTransition: EdgeTransition?
     private var revealAfterHiding = false
+    private var edgeMotion: EdgeMotion?
 
     private var currentKey: String {
         if permissionRequest != nil {
@@ -615,21 +624,64 @@ final class PetController: NSObject, NSApplicationDelegate {
         })
     }
 
-    private func animateWindow(
+    private func stopEdgeMotion() {
+        edgeMotionTimer?.invalidate()
+        edgeMotionTimer = nil
+        edgeMotion = nil
+    }
+
+    @discardableResult
+    private func startEdgeMotion(
         to origin: NSPoint,
         completion: @escaping () -> Void
-    ) {
+    ) -> Bool {
         guard let window else {
-            completion()
+            return false
+        }
+
+        stopEdgeMotion()
+        edgeMotion = EdgeMotion(
+            start: window.frame.origin,
+            target: origin,
+            startedAt: ProcessInfo.processInfo.systemUptime,
+            completion: completion
+        )
+        let timer = Timer(
+            timeInterval: EdgeHidePolicy.motionFrameInterval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.advanceEdgeMotion()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        edgeMotionTimer = timer
+        return true
+    }
+
+    private func advanceEdgeMotion() {
+        guard let motion = edgeMotion, let window else {
+            stopEdgeMotion()
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = EdgeHidePolicy.transitionDuration
-            context.allowsImplicitAnimation = true
-            window.animator().setFrameOrigin(origin)
-        } completionHandler: {
-            DispatchQueue.main.async(execute: completion)
+        let elapsed = ProcessInfo.processInfo.systemUptime - motion.startedAt
+        let progress = min(
+            1,
+            max(0, elapsed / EdgeHidePolicy.transitionDuration)
+        )
+        let eased = edgeMotionEasedProgress(CGFloat(progress))
+        let origin = NSPoint(
+            x: motion.start.x
+                + (motion.target.x - motion.start.x) * eased,
+            y: motion.start.y
+                + (motion.target.y - motion.start.y) * eased
+        )
+        window.setFrameOrigin(origin)
+        guard progress >= 1 else {
+            return
         }
+
+        window.setFrameOrigin(motion.target)
+        stopEdgeMotion()
+        DispatchQueue.main.async(execute: motion.completion)
     }
 
     @discardableResult
@@ -687,7 +739,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             x: window.frame.origin.x + delta.x,
             y: window.frame.origin.y + delta.y
         )
-        animateWindow(to: target) { [weak self] in
+        guard startEdgeMotion(to: target, completion: { [weak self] in
             guard
                 let self,
                 self.edgeTransition == .hiding,
@@ -706,6 +758,10 @@ final class PetController: NSObject, NSApplicationDelegate {
             self.tailView?.needsDisplay = true
             self.tailWindow?.orderFrontRegardless()
             self.writeHeartbeat(force: true)
+        }) else {
+            edgePlacement = nil
+            edgeTransition = nil
+            return false
         }
         return true
     }
@@ -784,7 +840,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             x: window.frame.origin.x + delta.x,
             y: window.frame.origin.y + delta.y
         )
-        animateWindow(to: target) { [weak self] in
+        guard startEdgeMotion(to: target, completion: { [weak self] in
             guard let self, self.edgeTransition == .revealing else {
                 return
             }
@@ -796,6 +852,10 @@ final class PetController: NSObject, NSApplicationDelegate {
             self.renderCurrent()
             self.scheduleCurrent()
             self.writeHeartbeat(force: true)
+        }) else {
+            edgePlacement = nil
+            edgeTransition = nil
+            return false
         }
         return true
     }
@@ -1542,6 +1602,21 @@ final class PetController: NSObject, NSApplicationDelegate {
 }
 
 func runManifestSelfTest() throws {
+    guard
+        edgeMotionEasedProgress(0) == 0,
+        abs(edgeMotionEasedProgress(0.5) - 0.5) < 0.0001,
+        edgeMotionEasedProgress(1) == 1
+    else {
+        throw NSError(
+            domain: appBundleIdentifier,
+            code: 29,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Edge motion easing test failed."
+            ]
+        )
+    }
+
     let desktopFixture = NSRect(x: 0, y: 0, width: 1000, height: 800)
     let safeFixture = NSRect(x: 0, y: 80, width: 1000, height: 680)
     guard

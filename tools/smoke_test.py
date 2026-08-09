@@ -14,7 +14,12 @@ from PIL import Image
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
-import pig_pet  # noqa: E402
+if sys.platform == "win32":
+    import pig_pet  # noqa: E402
+else:
+    from export_macos_assets import import_asset_pipeline  # noqa: E402
+
+    pig_pet = import_asset_pipeline()
 
 
 def main() -> None:

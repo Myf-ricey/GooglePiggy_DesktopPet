@@ -307,6 +307,9 @@ def main() -> None:
         assert ".truncatesLastVisibleLine" not in controller_source
         assert "beginEdgeHideIfNeeded()" in controller_source
         assert "activityRequiresVisiblePet" in controller_source
+        assert "startEdgeMotion(to: target" in controller_source
+        assert "advanceEdgeMotion()" in controller_source
+        assert "edgeMotionEasedProgress" in controller_source
         assert "let edgeFrame = screen.frame" in controller_source
         assert "let revealFrame = screen.visibleFrame" in controller_source
         edge_transition_source = controller_source[
@@ -318,6 +321,7 @@ def main() -> None:
         assert "func canEnterEdgeHide(" in edge_hiding_source
         assert "func touchedDesktopEdge(" in edge_hiding_source
         assert "static let revealClearance" in edge_hiding_source
+        assert "motionFrameInterval: TimeInterval = 1.0 / 60.0" in edge_hiding_source
         assert "static let tailScreenOverlap: CGFloat = 30" in edge_hiding_source
         assert (
             "bottomRevealDropHeightMultiplier: CGFloat = 1"

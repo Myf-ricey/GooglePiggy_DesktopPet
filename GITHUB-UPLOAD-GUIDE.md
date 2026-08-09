@@ -4,10 +4,10 @@
 
 ## 1. 覆盖现有 Windows 仓库
 
-使用：
+使用当前源码覆盖包：
 
 ```text
-GooglePiggy-GitHub-source-v0.2.3.zip
+GooglePiggy-GitHub-source-v0.3.2.zip
 ```
 
 操作方式：
@@ -18,10 +18,10 @@ GooglePiggy-GitHub-source-v0.2.3.zip
    源码、构建脚本、说明文档和工作流。
 4. 查看 Git diff，确认没有个人文件、测试文件、虚拟环境或构建产物。
 5. 阅读 `README.md`、`README-MAC.md`、`RELEASE-CHECKLIST.md` 和
-   `RELEASE-NOTES-v0.2.3.md`。
-6. 你确认后再提交、推送或创建 `v0.2.3` 标签。
+   `RELEASE-NOTES-v0.3.2.md`。
+6. 你确认后再提交、推送或创建 `v0.3.2` 标签。
 
-不要把 `GooglePiggy-GitHub-source-v0.2.3.zip` 当成程序下载附件让普通用户安装；
+不要把 `GooglePiggy-GitHub-source-v0.3.2.zip` 当成程序下载附件让普通用户安装；
 GitHub 会从提交后的仓库自动生成 Source code ZIP。
 
 ## 2. GitHub Release 附件
@@ -29,16 +29,16 @@ GitHub 会从提交后的仓库自动生成 Source code ZIP。
 本地已经验证、可直接作为 macOS 下载项上传：
 
 ```text
-GooglePiggy-macos-universal.zip
+GooglePiggy-macos-universal-v0.3.2.zip
 GooglePiggy-macos-universal.dmg
 ```
 
 Windows x64、macOS arm64 和 macOS x64 包可由仓库里的两个 GitHub Actions
-工作流生成。创建 `v0.2.3` 标签前，先按 `RELEASE-CHECKLIST.md` 完成清洁系统测试。
+工作流生成。创建 `v0.3.2` 标签前，先按 `RELEASE-CHECKLIST.md` 完成清洁系统测试。
 
 ## 3. 一次性交付总包
 
-`GooglePiggy-GitHub-upload-v0.2.3.zip` 只用于交付和备份，里面包含：
+`GooglePiggy-GitHub-upload-v0.3.2.zip` 只用于交付和备份，里面包含：
 
 - 仓库源码覆盖包；
 - Universal 2 Mac ZIP 与 DMG；

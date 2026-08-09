@@ -1,4 +1,4 @@
-# macOS Release Checklist
+# macOS Release Checklist (`v0.3.2`)
 
 ## 1. Local build
 
@@ -37,7 +37,7 @@ unzip -tq dist/GooglePiggy-macos-universal.zip
 For one download that supports all Macs, upload:
 
 ```text
-GooglePiggy-macos-universal.zip
+GooglePiggy-macos-universal-v0.3.2.zip
 GooglePiggy-macos-universal.dmg
 ```
 
