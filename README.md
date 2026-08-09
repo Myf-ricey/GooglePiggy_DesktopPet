@@ -8,16 +8,17 @@
 这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它已经被
 整理成可以直接安装、自由修改，并能继续扩展到不同桌面平台的开源小工具。
 
-> **当前版本：`v0.3.0`。** 本次发布只更新 macOS：新增空闲触边隐藏和点尾跳回。
-> Windows 版暂时保持 `v0.2.3` 的功能，后续会单独更新。
+> **当前版本：`v0.3.1`。** 本次更新补齐 Windows 端空闲触边隐藏和点尾跳回；
+> macOS 端继续保留 `v0.3.0` 的原生实现。
 
 ## Features
 
 - Idle: 循环播放很轻微的呼吸动画。
 - Left click: 没有其他动作时，播放一次躺平动画。
 - Dragging: 拖动猪猪时播放左拱动画。
-- Edge hiding (macOS): 空闲时拖到屏幕外边缘，猪猪会跳进去，只露出可点击的小尾巴；
-  点一下尾巴就会跳回。工作、权限请求和完成状态会自动保持或恢复可见。
+- Edge hiding (Windows / macOS): 空闲时拖到屏幕外边缘，猪猪会跳进去，只露出可点击的
+  小尾巴；点一下尾巴就会跳回。Windows 和 macOS 都只对物理外边缘生效，内部显示器
+  接缝不会误触发；工作、权限请求和完成状态会自动保持或恢复可见。
 - Codex thinking: Codex 工作或思考时，播放追胡萝卜动画。
 - Codex success: Codex 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
 - Codex permission: Codex 请求权限时，播放疑问猪，并显示允许/拒绝气泡。
@@ -30,7 +31,7 @@
 
 | Item | Status |
 | --- | --- |
-| Windows 10/11 x64 | Supported (`v0.2.3`) |
+| Windows 10/11 x64 | Supported (`v0.3.1`, including edge hiding) |
 | macOS 13+ Apple Silicon | Supported (`v0.3.0`) |
 | macOS 13+ Intel | Supported (`v0.3.0`) |
 | Portable ZIP | Supported |
@@ -130,7 +131,11 @@ Codex 不会自动运行新写入的用户 Hook。首次安装后必须完成一
 
 ### Windows
 
-Download the Windows release ZIP from GitHub Releases:
+已核验的 Windows 便携包可直接从仓库下载：
+
+[GifPigDesktopPet-windows-x64.zip](releases/GifPigDesktopPet-windows-x64.zip)
+
+也可以从 GitHub Releases 下载 Windows release ZIP：
 
 ```text
 GifPigDesktopPet-windows-x64.zip
@@ -168,6 +173,22 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
 The uninstall script does not delete the extracted program folder itself.
+
+#### Windows 边缘隐藏
+
+Windows 端在猪猪处于 `responsive` 空闲模式时支持边缘隐藏：
+
+- 把猪猪拖到任意显示器的左、右、上或下方物理外边缘并松手；
+- 主窗口会平滑收进屏幕外，只留下一个 68×68 的可点击尾巴窗口；
+- 单击尾巴后猪猪会播放揭示动画并回到桌面；
+- 多显示器内部接缝不会触发隐藏；
+- Codex 开始工作、请求权限或完成任务时会自动恢复显示。
+
+Windows 端的真实桌面回归测试可以运行：
+
+```powershell
+python .\tools\runtime_edge_smoke.py
+```
 
 ## Codex Integration
 
@@ -292,9 +313,9 @@ The build script will:
 
 1. create or reuse `.venv-build`;
 2. install build dependencies from `requirements-dev.txt`;
-3. prepare transparent effect assets;
+3. prepare transparent effect and edge-tail assets;
 4. generate animation cache and QA outputs;
-5. run smoke tests;
+5. run source and edge-hiding smoke tests;
 6. build the portable app with PyInstaller;
 7. create a ZIP.
 
@@ -349,6 +370,7 @@ git push origin vNEXT
 ├─ .github/workflows/macos-release.yml
 ├─ assets/
 │  ├─ effects/          # processed transparent sparkle/firework assets
+│  ├─ edge-tail/         # four transparent tail assets for edge hiding
 │  ├─ source-effects/   # original effect images
 │  └─ source-gifs/      # source pig GIFs
 ├─ hooks/
@@ -359,6 +381,8 @@ git push origin vNEXT
 │  ├─ export_macos_assets.py
 │  ├─ test_macos_release.py
 │  ├─ package_github_source.py
+│  ├─ prepare_edge_tail_assets.py
+│  ├─ runtime_edge_smoke.py
 │  └─ smoke_test.py
 ├─ pig_pet.py
 ├─ macos/                  # native Swift/AppKit runtime and installer scripts
@@ -372,6 +396,7 @@ git push origin vNEXT
 ├─ requirements-dev.txt
 ├─ requirements-macos-build.txt
 ├─ README-MAC.md
+├─ RELEASE-NOTES-v0.3.1.md
 ├─ RELEASE-NOTES-v0.2.2.md
 ├─ RELEASE-NOTES-v0.2.3.md
 ├─ RELEASE-NOTES-v0.3.0.md

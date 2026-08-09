@@ -14,6 +14,7 @@ try {
     $venvPython = Join-Path $venvDir 'Scripts\python.exe'
     & $venvPython -m pip install --upgrade pip
     & $venvPython -m pip install -r requirements-dev.txt
+    & $venvPython tools\prepare_edge_tail_assets.py --output assets\edge-tail
     & $venvPython tools\prepare_effect_assets.py
     & $venvPython pig_pet.py --qa-only
     & $venvPython tools\smoke_test.py

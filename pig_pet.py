@@ -54,7 +54,25 @@ SUCCESS_EFFECT_DURATION_SECONDS = 1.35
 HEARTBEAT_INTERVAL_SECONDS = 1.0
 PERMISSION_STATUS_STALE_SECONDS = 620.0
 MIN_DURATION_MS = 20
-CACHE_VERSION = 21
+EDGE_CONTACT_TOLERANCE = 10
+EDGE_REVEAL_CLEARANCE = 28
+EDGE_OFFSCREEN_PADDING = 16
+EDGE_TRANSITION_DURATION_SECONDS = 0.48
+EDGE_TAIL_WINDOW_SIZE = 68
+EDGE_TAIL_SCREEN_OVERLAP = 30
+EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER = 1.0
+EDGE_REVEAL_FRAME_COUNT = 19
+EDGE_REVEAL_FRAME_DURATION_MS = 45
+EDGE_REVEAL_KEYFRAMES = (
+    (0.00, 0.0, 1.00),
+    (0.12, 0.0, 0.94),
+    (0.32, 11.0, 1.08),
+    (0.50, 18.0, 1.03),
+    (0.72, 5.0, 0.95),
+    (0.84, 2.0, 1.03),
+    (1.00, 0.0, 1.00),
+)
+CACHE_VERSION = 22
 
 WM_DESTROY = 0x0002
 WM_TIMER = 0x0113
@@ -72,11 +90,16 @@ WS_POPUP = 0x80000000
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
+WS_EX_NOACTIVATE = 0x08000000
+
+HWND_TOPMOST = ctypes.c_void_p(-1)
 
 SW_SHOW = 5
+SW_HIDE = 0
 SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
 ULW_ALPHA = 0x00000002
 AC_SRC_OVER = 0x00
 AC_SRC_ALPHA = 0x01
@@ -92,6 +115,8 @@ TPM_RIGHTBUTTON = 0x0002
 
 SPI_GETWORKAREA = 0x0030
 ERROR_ALREADY_EXISTS = 183
+MONITOR_DEFAULTTONULL = 0
+MONITOR_DEFAULTTONEAREST = 2
 
 
 class POINT(ctypes.Structure):
@@ -159,6 +184,24 @@ class WNDCLASSW(ctypes.Structure):
     ]
 
 
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+MONITORENUMPROC = ctypes.WINFUNCTYPE(
+    wintypes.BOOL,
+    wintypes.HANDLE,
+    wintypes.HDC,
+    ctypes.POINTER(RECT),
+    wintypes.LPARAM,
+)
+
+
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
@@ -212,6 +255,28 @@ user32.SetCapture.argtypes = [wintypes.HWND]
 user32.SetCapture.restype = wintypes.HWND
 user32.ReleaseCapture.restype = wintypes.BOOL
 user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.DestroyWindow.restype = wintypes.BOOL
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.SetForegroundWindow.restype = wintypes.BOOL
+user32.EnumDisplayMonitors.argtypes = [
+    wintypes.HDC,
+    ctypes.POINTER(RECT),
+    MONITORENUMPROC,
+    wintypes.LPARAM,
+]
+user32.EnumDisplayMonitors.restype = wintypes.BOOL
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+user32.GetMonitorInfoW.restype = wintypes.BOOL
+user32.MonitorFromPoint.argtypes = [POINT, wintypes.DWORD]
+user32.MonitorFromPoint.restype = wintypes.HANDLE
+user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+user32.MonitorFromWindow.restype = wintypes.HANDLE
 user32.SetWindowPos.argtypes = [
     wintypes.HWND,
     wintypes.HWND,
@@ -269,6 +334,27 @@ class Animation:
     @property
     def total_duration(self) -> int:
         return sum(self.durations)
+
+
+@dataclass(frozen=True)
+class MonitorInfo:
+    frame: tuple[int, int, int, int]
+    work: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class EdgePlacement:
+    edge: str
+    monitor: MonitorInfo
+    tail_rect: tuple[int, int, int, int]
+
+
+@dataclass
+class EdgeMotion:
+    start: tuple[int, int]
+    target: tuple[int, int]
+    started_at: float
+    completion: str
 
 
 def application_dir() -> Path:
@@ -345,6 +431,219 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def rect_contains_point(rect: tuple[int, int, int, int], point: tuple[int, int]) -> bool:
+    return rect[0] <= point[0] < rect[2] and rect[1] <= point[1] < rect[3]
+
+
+def rect_intersection_area(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> int:
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    return max(0, right - left) * max(0, bottom - top)
+
+
+def enumerate_monitor_infos() -> list[MonitorInfo]:
+    monitors: list[MonitorInfo] = []
+
+    @MONITORENUMPROC
+    def collect(
+        monitor: wintypes.HANDLE,
+        _device_context: wintypes.HDC,
+        _monitor_rect: ctypes.POINTER(RECT),
+        _data: int,
+    ) -> int:
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            monitors.append(
+                MonitorInfo(
+                    frame=(
+                        int(info.rcMonitor.left),
+                        int(info.rcMonitor.top),
+                        int(info.rcMonitor.right),
+                        int(info.rcMonitor.bottom),
+                    ),
+                    work=(
+                        int(info.rcWork.left),
+                        int(info.rcWork.top),
+                        int(info.rcWork.right),
+                        int(info.rcWork.bottom),
+                    ),
+                )
+            )
+        return 1
+
+    user32.EnumDisplayMonitors(None, None, collect, 0)
+    if monitors:
+        return monitors
+
+    fallback = RECT()
+    if user32.SystemParametersInfoW(
+        SPI_GETWORKAREA,
+        0,
+        ctypes.byref(fallback),
+        0,
+    ):
+        work = (
+            int(fallback.left),
+            int(fallback.top),
+            int(fallback.right),
+            int(fallback.bottom),
+        )
+        return [MonitorInfo(frame=work, work=work)]
+    return []
+
+
+def touched_desktop_edge(
+    pet_frame: tuple[int, int, int, int],
+    desktop_frame: tuple[int, int, int, int],
+    allowed_edges: set[str] | None = None,
+    tolerance: int = EDGE_CONTACT_TOLERANCE,
+) -> str | None:
+    allowed = (
+        set(allowed_edges)
+        if allowed_edges is not None
+        else {"left", "right", "top", "bottom"}
+    )
+    overlaps_vertically = (
+        pet_frame[3] >= desktop_frame[1]
+        and pet_frame[1] <= desktop_frame[3]
+    )
+    overlaps_horizontally = (
+        pet_frame[2] >= desktop_frame[0]
+        and pet_frame[0] <= desktop_frame[2]
+    )
+    candidates: list[tuple[str, int]] = []
+    if "left" in allowed and overlaps_vertically and pet_frame[0] <= desktop_frame[0] + tolerance:
+        candidates.append(("left", max(0, pet_frame[2] - desktop_frame[0])))
+    if "right" in allowed and overlaps_vertically and pet_frame[2] >= desktop_frame[2] - tolerance:
+        candidates.append(("right", max(0, desktop_frame[2] - pet_frame[0])))
+    if "top" in allowed and overlaps_horizontally and pet_frame[1] <= desktop_frame[1] + tolerance:
+        candidates.append(("top", max(0, pet_frame[3] - desktop_frame[1])))
+    if "bottom" in allowed and overlaps_horizontally and pet_frame[3] >= desktop_frame[3] - tolerance:
+        candidates.append(("bottom", max(0, desktop_frame[3] - pet_frame[1])))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda candidate: candidate[1])[0]
+
+
+def offscreen_delta(
+    edge: str,
+    pet_frame: tuple[int, int, int, int],
+    desktop_frame: tuple[int, int, int, int],
+    padding: int = EDGE_OFFSCREEN_PADDING,
+) -> tuple[int, int]:
+    if edge == "left":
+        return (desktop_frame[0] - pet_frame[2] - padding, 0)
+    if edge == "right":
+        return (desktop_frame[2] - pet_frame[0] + padding, 0)
+    if edge == "top":
+        return (0, desktop_frame[1] - pet_frame[3] - padding)
+    if edge == "bottom":
+        return (0, desktop_frame[3] - pet_frame[1] + padding)
+    raise ValueError(f"unknown desktop edge: {edge}")
+
+
+def _containment_shift(
+    item_min: float,
+    item_max: float,
+    container_min: float,
+    container_max: float,
+    clearance: float,
+) -> float:
+    safe_min = container_min + clearance
+    safe_max = container_max - clearance
+    if item_max - item_min > safe_max - safe_min:
+        return (container_min + container_max - item_min - item_max) / 2
+    if item_min < safe_min:
+        return safe_min - item_min
+    if item_max > safe_max:
+        return safe_max - item_max
+    return 0.0
+
+
+def revealed_delta(
+    edge: str,
+    content_frame: tuple[int, int, int, int],
+    desktop_frame: tuple[int, int, int, int],
+    clearance: int = EDGE_REVEAL_CLEARANCE,
+    bottom_drop: float = 0.0,
+) -> tuple[float, float]:
+    delta_x = 0.0
+    delta_y = 0.0
+    if edge == "left":
+        delta_x = desktop_frame[0] + clearance - content_frame[0]
+    elif edge == "right":
+        delta_x = desktop_frame[2] - clearance - content_frame[2]
+    elif edge == "top":
+        delta_y = desktop_frame[1] + clearance - content_frame[1]
+    elif edge == "bottom":
+        delta_y = desktop_frame[3] - clearance + max(0.0, bottom_drop) - content_frame[3]
+    else:
+        raise ValueError(f"unknown desktop edge: {edge}")
+
+    shifted = (
+        content_frame[0] + delta_x,
+        content_frame[1] + delta_y,
+        content_frame[2] + delta_x,
+        content_frame[3] + delta_y,
+    )
+    if edge in {"left", "right"}:
+        delta_y += _containment_shift(
+            shifted[1],
+            shifted[3],
+            desktop_frame[1],
+            desktop_frame[3],
+            clearance,
+        )
+    else:
+        delta_x += _containment_shift(
+            shifted[0],
+            shifted[2],
+            desktop_frame[0],
+            desktop_frame[2],
+            clearance,
+        )
+    return (delta_x, delta_y)
+
+
+def tail_window_rect(
+    edge: str,
+    pet_frame: tuple[int, int, int, int],
+    desktop_frame: tuple[int, int, int, int],
+    size: int = EDGE_TAIL_WINDOW_SIZE,
+    screen_overlap: int = EDGE_TAIL_SCREEN_OVERLAP,
+) -> tuple[int, int, int, int]:
+    centered_x = min(
+        max((pet_frame[0] + pet_frame[2] - size) / 2, desktop_frame[0]),
+        desktop_frame[2] - size,
+    )
+    centered_y = min(
+        max((pet_frame[1] + pet_frame[3] - size) / 2, desktop_frame[1]),
+        desktop_frame[3] - size,
+    )
+    if edge == "left":
+        left, top = desktop_frame[0] - screen_overlap, centered_y
+    elif edge == "right":
+        left, top = desktop_frame[2] - size + screen_overlap, centered_y
+    elif edge == "top":
+        left, top = centered_x, desktop_frame[1] - screen_overlap
+    elif edge == "bottom":
+        left, top = centered_x, desktop_frame[3] - size + screen_overlap
+    else:
+        raise ValueError(f"unknown desktop edge: {edge}")
+    return (
+        round(left),
+        round(top),
+        round(left + size),
+        round(top + size),
+    )
 
 
 def clear_transparent_rgb(image: Image.Image) -> Image.Image:
@@ -1007,6 +1306,57 @@ def make_idle_breathing_animation(base: Animation) -> Animation:
     )
 
 
+def edge_reveal_motion(progress: float) -> tuple[float, float]:
+    """Interpolate one soft bounce for returning from an edge tail."""
+
+    progress = min(1.0, max(0.0, progress))
+    for start, end in zip(EDGE_REVEAL_KEYFRAMES[:-1], EDGE_REVEAL_KEYFRAMES[1:]):
+        if progress > end[0]:
+            continue
+        span = max(0.0001, end[0] - start[0])
+        local = (progress - start[0]) / span
+        eased = local * local * (3.0 - 2.0 * local)
+        lift = start[1] + (end[1] - start[1]) * eased
+        scale_y = start[2] + (end[2] - start[2]) * eased
+        return lift, scale_y
+    return EDGE_REVEAL_KEYFRAMES[-1][1], EDGE_REVEAL_KEYFRAMES[-1][2]
+
+
+def make_edge_reveal_animation(base: Animation) -> Animation:
+    """Create the one-shot idle bounce used when the tail is clicked."""
+
+    base_frame = base.frames[0]
+    subject_box = base_frame.getbbox()
+    if subject_box is None:
+        raise ValueError("base edge reveal frame is empty")
+    subject = base_frame.crop(subject_box)
+    frames: list[Image.Image] = []
+    denominator = max(1, EDGE_REVEAL_FRAME_COUNT - 1)
+    for index in range(EDGE_REVEAL_FRAME_COUNT):
+        progress = index / denominator
+        lift, scale_y = edge_reveal_motion(progress)
+        resized_height = max(1, round(subject.height * scale_y))
+        resized = subject.resize(
+            (subject.width, resized_height),
+            Image.Resampling.LANCZOS,
+        )
+        canvas = Image.new("RGBA", base_frame.size, (0, 0, 0, 0))
+        bottom = subject_box[3] - round(lift)
+        canvas.alpha_composite(
+            resized,
+            (subject_box[0], bottom - resized_height),
+        )
+        frames.append(clear_transparent_rgb(canvas))
+    return Animation(
+        key="edge_reveal",
+        label="触边跳出",
+        source=base.source,
+        frames=frames,
+        durations=[EDGE_REVEAL_FRAME_DURATION_MS] * len(frames),
+        source_indices=[0] * len(frames),
+    )
+
+
 def cache_signature(source_dir: Path) -> dict[str, object]:
     sources = {
         key: path
@@ -1246,10 +1596,17 @@ class PigPet:
         self.heartbeat_path = heartbeat_path_for_status(self.status_path)
         self.last_heartbeat = 0.0
         self.hwnd: int | None = None
+        self.tail_hwnd: int | None = None
         self.timer_id = 1
+        self.edge_timer_id = 2
+        self.edge_placement: EdgePlacement | None = None
+        self.edge_transition: str | None = None
+        self.reveal_after_hiding = False
+        self.edge_motion: EdgeMotion | None = None
         self.wndproc = WNDPROC(self._wndproc)
         self.render_cache: dict[tuple[str, int], bytes] = {}
         self.effects = self._load_effects()
+        self.edge_tail_assets = self._load_edge_tail_assets()
         initial_status = read_status(self.status_path)
         self.bridge_token = ""
         self.bridge_status = "idle"
@@ -1270,6 +1627,26 @@ class PigPet:
     def current_animation(self) -> Animation:
         return self.animations[self.current_key]
 
+    @property
+    def can_hide_at_desktop_edge(self) -> bool:
+        return (
+            self.mode == "responsive"
+            and self.bridge_status == "idle"
+            and self.permission_request is None
+            and self.transient_key is None
+            and self.edge_placement is None
+            and self.edge_transition is None
+            and bool(self.edge_tail_assets)
+        )
+
+    @property
+    def activity_requires_visible_pet(self) -> bool:
+        return (
+            self.bridge_status == "thinking"
+            or self.permission_request is not None
+            or self.success_effect_started is not None
+        )
+
     def _load_effects(self) -> dict[str, Image.Image]:
         result: dict[str, Image.Image] = {}
         effects_dir = self.app_dir / "assets" / "effects"
@@ -1277,6 +1654,19 @@ class PigPet:
             path = effects_dir / f"{name}.png"
             if path.is_file():
                 result[name] = clear_transparent_rgb(Image.open(path).convert("RGBA"))
+        return result
+
+    def _load_edge_tail_assets(self) -> dict[str, Image.Image]:
+        result: dict[str, Image.Image] = {}
+        edge_dir = self.app_dir / "assets" / "edge-tail"
+        for edge in ("left", "right", "top", "bottom"):
+            path = edge_dir / f"{edge}.png"
+            if not path.is_file():
+                continue
+            with Image.open(path) as opened:
+                image = clear_transparent_rgb(opened.convert("RGBA"))
+            if image.size == (EDGE_TAIL_WINDOW_SIZE, EDGE_TAIL_WINDOW_SIZE):
+                result[edge] = image
         return result
 
     def run(self) -> None:
@@ -1319,7 +1709,26 @@ class PigPet:
         if not self.hwnd:
             raise ctypes.WinError(ctypes.get_last_error())
 
+        self.tail_hwnd = user32.CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            CLASS_NAME,
+            f"{APP_NAME} Tail",
+            WS_POPUP,
+            0,
+            0,
+            EDGE_TAIL_WINDOW_SIZE,
+            EDGE_TAIL_WINDOW_SIZE,
+            None,
+            None,
+            instance,
+            None,
+        )
+        if not self.tail_hwnd:
+            user32.DestroyWindow(self.hwnd)
+            raise ctypes.WinError(ctypes.get_last_error())
+
         user32.ShowWindow(self.hwnd, SW_SHOW)
+        user32.ShowWindow(self.tail_hwnd, SW_HIDE)
         self._write_heartbeat(force=True)
         self._render_current()
         self._schedule_current()
@@ -1359,6 +1768,25 @@ class PigPet:
                     int(position.bottom),
                 ]
             payload["window_visible"] = bool(user32.IsWindowVisible(self.hwnd))
+        if self.edge_placement is not None:
+            payload["presentation"] = self.edge_transition or "hidden"
+            payload["hidden_edge"] = self.edge_placement.edge
+        else:
+            payload["presentation"] = "visible"
+        payload["tail_visible"] = bool(
+            self.tail_hwnd is not None
+            and user32.IsWindowVisible(self.tail_hwnd)
+        )
+        if self.tail_hwnd is not None:
+            payload["tail_hwnd"] = int(self.tail_hwnd)
+            tail_position = RECT()
+            if user32.GetWindowRect(self.tail_hwnd, ctypes.byref(tail_position)):
+                payload["tail_rect"] = [
+                    int(tail_position.left),
+                    int(tail_position.top),
+                    int(tail_position.right),
+                    int(tail_position.bottom),
+                ]
         try:
             write_json_atomic(self.heartbeat_path, payload)
         except OSError:
@@ -1511,7 +1939,9 @@ class PigPet:
         if not force and now - self.last_status_poll < STATUS_POLL_INTERVAL_SECONDS:
             return False
         self.last_status_poll = now
-        return self._apply_bridge_payload(read_status(self.status_path))
+        changed = self._apply_bridge_payload(read_status(self.status_path))
+        revealed = self._reveal_for_activity_if_needed()
+        return changed or revealed
 
     def _advance(self) -> None:
         self._write_heartbeat()
@@ -1530,6 +1960,8 @@ class PigPet:
         self._schedule_current()
 
     def _select_mode(self, mode: str) -> None:
+        if self.edge_placement is not None:
+            self._begin_edge_reveal(play_reveal_animation=False)
         self.mode = mode
         self.transient_key = None
         self.transient_once = False
@@ -1539,6 +1971,330 @@ class PigPet:
         self._poll_bridge(force=True)
         self._render_current()
         self._schedule_current()
+
+    def _window_rect(self, hwnd: int | None) -> tuple[int, int, int, int] | None:
+        if hwnd is None:
+            return None
+        rect = RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        return (
+            int(rect.left),
+            int(rect.top),
+            int(rect.right),
+            int(rect.bottom),
+        )
+
+    def _set_window_origin(self, hwnd: int, origin: tuple[int, int]) -> None:
+        user32.SetWindowPos(
+            hwnd,
+            None,
+            int(origin[0]),
+            int(origin[1]),
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+
+    def _current_pet_local_bounds(self) -> tuple[int, int, int, int]:
+        animation = self.current_animation
+        if self.frame_index >= len(animation.frames):
+            self.frame_index = 0
+        bounds = animation.frames[self.frame_index].getbbox()
+        if bounds is None:
+            return (300, 375, 500, 585)
+        return tuple(int(value) for value in bounds)
+
+    def _current_content_local_bounds(self) -> tuple[int, int, int, int]:
+        result = self._current_pet_local_bounds()
+        if self.permission_request is None:
+            return result
+        bubble = self.permission_bubble_rect or (262, 160, 558, 348)
+        bubble_with_pointer = (
+            bubble[0],
+            bubble[1],
+            bubble[2],
+            bubble[3] + 25,
+        )
+        return (
+            min(result[0], bubble_with_pointer[0]),
+            min(result[1], bubble_with_pointer[1]),
+            max(result[2], bubble_with_pointer[2]),
+            max(result[3], bubble_with_pointer[3]),
+        )
+
+    def _screen_bounds_for_local(
+        self,
+        local_bounds: tuple[int, int, int, int],
+    ) -> tuple[int, int, int, int] | None:
+        window = self._window_rect(self.hwnd)
+        if window is None:
+            return None
+        return (
+            window[0] + local_bounds[0],
+            window[1] + local_bounds[1],
+            window[0] + local_bounds[2],
+            window[1] + local_bounds[3],
+        )
+
+    def _interaction_monitor(self) -> MonitorInfo | None:
+        monitors = enumerate_monitor_infos()
+        if not monitors:
+            return None
+        cursor = POINT()
+        if user32.GetCursorPos(ctypes.byref(cursor)):
+            point = (int(cursor.x), int(cursor.y))
+            for monitor in monitors:
+                if rect_contains_point(monitor.frame, point):
+                    return monitor
+        window = self._window_rect(self.hwnd)
+        if window is not None:
+            return max(
+                monitors,
+                key=lambda monitor: rect_intersection_area(window, monitor.frame),
+            )
+        return monitors[0]
+
+    @staticmethod
+    def _exposed_edges(
+        monitor: MonitorInfo,
+        pet_frame: tuple[int, int, int, int],
+        monitors: list[MonitorInfo],
+    ) -> set[str]:
+        physical = monitor.frame
+        probe_offset = 2
+        probe_x = min(max((pet_frame[0] + pet_frame[2]) // 2, physical[0] + 1), physical[2] - 1)
+        probe_y = min(max((pet_frame[1] + pet_frame[3]) // 2, physical[1] + 1), physical[3] - 1)
+        probes = {
+            "left": (physical[0] - probe_offset, probe_y),
+            "right": (physical[2] + probe_offset, probe_y),
+            "top": (probe_x, physical[1] - probe_offset),
+            "bottom": (probe_x, physical[3] + probe_offset),
+        }
+        other_frames = [
+            candidate.frame
+            for candidate in monitors
+            if candidate.frame != monitor.frame
+        ]
+        return {
+            edge
+            for edge, point in probes.items()
+            if not any(rect_contains_point(frame, point) for frame in other_frames)
+        }
+
+    def _start_edge_motion(
+        self,
+        target: tuple[int, int],
+        completion: str,
+    ) -> bool:
+        if self.hwnd is None:
+            return False
+        current = self._window_rect(self.hwnd)
+        if current is None:
+            return False
+        self.edge_motion = EdgeMotion(
+            start=(current[0], current[1]),
+            target=(int(target[0]), int(target[1])),
+            started_at=time.monotonic(),
+            completion=completion,
+        )
+        user32.KillTimer(self.hwnd, self.edge_timer_id)
+        user32.SetTimer(self.hwnd, self.edge_timer_id, 16, None)
+        return True
+
+    def _advance_edge_motion(self) -> None:
+        motion = self.edge_motion
+        if motion is None or self.hwnd is None:
+            return
+        progress = min(
+            1.0,
+            max(
+                0.0,
+                (time.monotonic() - motion.started_at)
+                / EDGE_TRANSITION_DURATION_SECONDS,
+            ),
+        )
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        origin = (
+            round(motion.start[0] + (motion.target[0] - motion.start[0]) * eased),
+            round(motion.start[1] + (motion.target[1] - motion.start[1]) * eased),
+        )
+        self._set_window_origin(self.hwnd, origin)
+        if progress < 1.0:
+            return
+        self._set_window_origin(self.hwnd, motion.target)
+        self.edge_motion = None
+        user32.KillTimer(self.hwnd, self.edge_timer_id)
+        if motion.completion == "hide":
+            self._finish_edge_hide()
+        else:
+            self._finish_edge_reveal()
+
+    def _show_tail(self, placement: EdgePlacement) -> None:
+        if self.tail_hwnd is None:
+            return
+        left, top, right, bottom = placement.tail_rect
+        user32.SetWindowPos(
+            self.tail_hwnd,
+            HWND_TOPMOST,
+            left,
+            top,
+            right - left,
+            bottom - top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+        self._render_tail(placement.edge)
+        user32.ShowWindow(self.tail_hwnd, SW_SHOW)
+
+    def _hide_tail(self) -> None:
+        if self.tail_hwnd is not None:
+            user32.ShowWindow(self.tail_hwnd, SW_HIDE)
+
+    def _finish_edge_hide(self) -> None:
+        placement = self.edge_placement
+        if placement is None:
+            self.edge_transition = None
+            return
+        self.edge_transition = None
+        if self.reveal_after_hiding or self.activity_requires_visible_pet:
+            self.reveal_after_hiding = False
+            self._begin_edge_reveal(play_reveal_animation=False)
+            return
+        if self.hwnd is not None:
+            user32.ShowWindow(self.hwnd, SW_HIDE)
+        self._show_tail(placement)
+        self._write_heartbeat(force=True)
+
+    def _finish_edge_reveal(self) -> None:
+        placement = self.edge_placement
+        if placement is None:
+            self.edge_transition = None
+            return
+        self._poll_bridge(force=True)
+        self._settle_revealed_window(placement)
+        self.edge_placement = None
+        self.edge_transition = None
+        self.reveal_after_hiding = False
+        self._render_current()
+        self._schedule_current()
+        self._write_heartbeat(force=True)
+
+    def _begin_edge_hide_if_needed(self) -> bool:
+        if not self.can_hide_at_desktop_edge or self.hwnd is None:
+            return False
+        pet_frame = self._screen_bounds_for_local(self._current_pet_local_bounds())
+        monitor = self._interaction_monitor()
+        if pet_frame is None or monitor is None:
+            return False
+        edge = touched_desktop_edge(
+            pet_frame,
+            monitor.frame,
+            self._exposed_edges(monitor, pet_frame, enumerate_monitor_infos()),
+        )
+        if edge is None or edge not in self.edge_tail_assets:
+            return False
+        placement = EdgePlacement(
+            edge=edge,
+            monitor=monitor,
+            tail_rect=tail_window_rect(edge, pet_frame, monitor.frame),
+        )
+        self.edge_placement = placement
+        self.edge_transition = "hiding"
+        self.reveal_after_hiding = False
+        self.success_effect_started = None
+        self._switch_visual("edge_reveal", once=True)
+        moving_pet_frame = self._screen_bounds_for_local(self._current_pet_local_bounds())
+        if moving_pet_frame is None:
+            self.edge_placement = None
+            self.edge_transition = None
+            return False
+        delta = offscreen_delta(edge, moving_pet_frame, monitor.frame)
+        current_window = self._window_rect(self.hwnd)
+        if current_window is None or not self._start_edge_motion(
+            (current_window[0] + delta[0], current_window[1] + delta[1]),
+            "hide",
+        ):
+            self.edge_placement = None
+            self.edge_transition = None
+            return False
+        return True
+
+    def _begin_edge_reveal(self, play_reveal_animation: bool) -> bool:
+        placement = self.edge_placement
+        if placement is None:
+            return False
+        if self.edge_transition == "hiding":
+            self.reveal_after_hiding = True
+            return True
+        if self.edge_transition == "revealing" or self.hwnd is None:
+            return False
+        self.edge_transition = "revealing"
+        self.reveal_after_hiding = False
+        self._hide_tail()
+        if play_reveal_animation:
+            self.success_effect_started = None
+            self._switch_visual("edge_reveal", once=True)
+        user32.ShowWindow(self.hwnd, SW_SHOW)
+        if not play_reveal_animation:
+            self._render_current()
+        content_frame = self._screen_bounds_for_local(self._current_content_local_bounds())
+        if content_frame is None:
+            self.edge_placement = None
+            self.edge_transition = None
+            return False
+        pet_bounds = self._current_pet_local_bounds()
+        bottom_drop = (
+            (pet_bounds[3] - pet_bounds[1])
+            * EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER
+            if placement.edge == "bottom"
+            else 0.0
+        )
+        delta = revealed_delta(
+            placement.edge,
+            content_frame,
+            placement.monitor.work,
+            bottom_drop=bottom_drop,
+        )
+        current_window = self._window_rect(self.hwnd)
+        if current_window is None or not self._start_edge_motion(
+            (round(current_window[0] + delta[0]), round(current_window[1] + delta[1])),
+            "reveal",
+        ):
+            self.edge_placement = None
+            self.edge_transition = None
+            return False
+        return True
+
+    def _settle_revealed_window(self, placement: EdgePlacement) -> None:
+        content_frame = self._screen_bounds_for_local(self._current_content_local_bounds())
+        if content_frame is None or self.hwnd is None:
+            return
+        pet_bounds = self._current_pet_local_bounds()
+        bottom_drop = (
+            (pet_bounds[3] - pet_bounds[1])
+            * EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER
+            if placement.edge == "bottom"
+            else 0.0
+        )
+        delta = revealed_delta(
+            placement.edge,
+            content_frame,
+            placement.monitor.work,
+            bottom_drop=bottom_drop,
+        )
+        if abs(delta[0]) < 0.5 and abs(delta[1]) < 0.5:
+            return
+        current_window = self._window_rect(self.hwnd)
+        if current_window is not None:
+            self._set_window_origin(
+                self.hwnd,
+                (round(current_window[0] + delta[0]), round(current_window[1] + delta[1])),
+            )
+
+    def _reveal_for_activity_if_needed(self) -> bool:
+        if self.edge_placement is None or not self.activity_requires_visible_pet:
+            return False
+        return self._begin_edge_reveal(play_reveal_animation=False)
 
     def _effect_variant(
         self,
@@ -1727,17 +2483,20 @@ class PigPet:
             self.render_cache[cache_key] = result
         return result
 
-    def _render_current(self) -> None:
-        if self.hwnd is None:
-            return
-        pixels = self._frame_bytes(self.current_key, self.frame_index)
+    def _render_layered_window(
+        self,
+        hwnd: int,
+        pixels: bytes,
+        width: int,
+        height: int,
+    ) -> None:
         screen_dc = user32.GetDC(None)
         memory_dc = gdi32.CreateCompatibleDC(screen_dc)
 
         bitmap_info = BITMAPINFO()
         bitmap_info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bitmap_info.bmiHeader.biWidth = WINDOW_SIZE
-        bitmap_info.bmiHeader.biHeight = -WINDOW_SIZE
+        bitmap_info.bmiHeader.biWidth = width
+        bitmap_info.bmiHeader.biHeight = -height
         bitmap_info.bmiHeader.biPlanes = 1
         bitmap_info.bmiHeader.biBitCount = 32
         bitmap_info.bmiHeader.biCompression = BI_RGB
@@ -1755,14 +2514,19 @@ class PigPet:
         ctypes.memmove(bits, pixels, len(pixels))
 
         position = RECT()
-        user32.GetWindowRect(self.hwnd, ctypes.byref(position))
+        if not user32.GetWindowRect(hwnd, ctypes.byref(position)):
+            gdi32.SelectObject(memory_dc, old_bitmap)
+            gdi32.DeleteObject(bitmap)
+            gdi32.DeleteDC(memory_dc)
+            user32.ReleaseDC(None, screen_dc)
+            return
         destination = POINT(position.left, position.top)
         source = POINT(0, 0)
-        size = SIZE(WINDOW_SIZE, WINDOW_SIZE)
+        size = SIZE(width, height)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
 
         user32.UpdateLayeredWindow(
-            self.hwnd,
+            hwnd,
             screen_dc,
             ctypes.byref(destination),
             ctypes.byref(size),
@@ -1777,6 +2541,29 @@ class PigPet:
         gdi32.DeleteObject(bitmap)
         gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(None, screen_dc)
+
+    def _render_current(self) -> None:
+        if self.hwnd is None:
+            return
+        self._render_layered_window(
+            self.hwnd,
+            self._frame_bytes(self.current_key, self.frame_index),
+            WINDOW_SIZE,
+            WINDOW_SIZE,
+        )
+
+    def _render_tail(self, edge: str) -> None:
+        if self.tail_hwnd is None:
+            return
+        image = self.edge_tail_assets.get(edge)
+        if image is None:
+            return
+        self._render_layered_window(
+            self.tail_hwnd,
+            premultiplied_bgra(image),
+            EDGE_TAIL_WINDOW_SIZE,
+            EDGE_TAIL_WINDOW_SIZE,
+        )
 
     def _cursor_window_position(self) -> tuple[int, int] | None:
         if self.hwnd is None:
@@ -1938,6 +2725,7 @@ class PigPet:
 
         if was_dragging and previous is not None:
             self._restore_after_drag(previous)
+            self._begin_edge_hide_if_needed()
         elif can_play_flat:
             self._switch_visual("flat", once=True)
 
@@ -1957,8 +2745,20 @@ class PigPet:
         if was_dragging and previous is not None:
             self._restore_after_drag(previous)
 
-    def _show_menu(self) -> None:
-        if self.hwnd is None:
+    def _restore_after_menu_dismissal(self) -> None:
+        if self.edge_placement is not None and self.edge_transition is None:
+            if self.hwnd is not None:
+                user32.ShowWindow(self.hwnd, SW_HIDE)
+            self._show_tail(self.edge_placement)
+        elif self.hwnd is not None:
+            user32.ShowWindow(self.hwnd, SW_SHOW)
+            self._render_current()
+            self._schedule_current()
+        self._write_heartbeat(force=True)
+
+    def _show_menu(self, owner_hwnd: int | None = None) -> None:
+        owner = owner_hwnd or self.hwnd or self.tail_hwnd
+        if owner is None:
             return
         menu = user32.CreatePopupMenu()
         entries = [
@@ -1981,26 +2781,43 @@ class PigPet:
 
         cursor = POINT()
         user32.GetCursorPos(ctypes.byref(cursor))
-        user32.SetForegroundWindow(self.hwnd)
+        user32.SetForegroundWindow(owner)
         command = user32.TrackPopupMenu(
             menu,
             TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
             cursor.x,
             cursor.y,
             0,
-            self.hwnd,
+            owner,
             None,
         )
         user32.DestroyMenu(menu)
         if command == 199:
-            user32.DestroyWindow(self.hwnd)
+            if self.hwnd is not None:
+                user32.DestroyWindow(self.hwnd)
+            return
         elif command == 150:
             set_autostart(not is_autostart_enabled(), self.app_dir)
         elif 100 <= command <= 106:
             self._select_mode(entries[command - 100][2])
+        self._restore_after_menu_dismissal()
 
     def _wndproc(self, hwnd: int, message: int, wparam: int, lparam: int) -> int:
+        if hwnd == self.tail_hwnd:
+            if message == WM_LBUTTONUP:
+                self._begin_edge_reveal(play_reveal_animation=True)
+                return 0
+            if message == WM_RBUTTONUP:
+                self._show_menu(hwnd)
+                return 0
+            if message == WM_DESTROY:
+                self.tail_hwnd = None
+                return 0
+            return user32.DefWindowProcW(hwnd, message, wparam, lparam)
         if message == WM_TIMER:
+            if wparam == self.edge_timer_id:
+                self._advance_edge_motion()
+                return 0
             self._advance()
             return 0
         if message in (WM_LBUTTONDOWN, WM_LBUTTONDBLCLK):
@@ -2013,10 +2830,16 @@ class PigPet:
             self._handle_left_button_up()
             return 0
         if message == WM_RBUTTONUP:
-            self._show_menu()
+            self._show_menu(hwnd)
             return 0
         if message == WM_DESTROY:
             user32.KillTimer(hwnd, self.timer_id)
+            user32.KillTimer(hwnd, self.edge_timer_id)
+            self.edge_motion = None
+            if self.tail_hwnd is not None:
+                tail_hwnd = self.tail_hwnd
+                user32.DestroyWindow(tail_hwnd)
+                self.tail_hwnd = None
             user32.PostQuitMessage(0)
             return 0
         return user32.DefWindowProcW(hwnd, message, wparam, lparam)
@@ -2026,13 +2849,15 @@ def build_animations(source_dir: Path) -> dict[str, Animation]:
     sources = identify_sources(source_dir)
     left = load_animation("left", "左拱", sources["left"], False)
     flat = load_animation("flat", "躺平", sources["flat"], False)
+    idle = make_idle_breathing_animation(flat)
     return {
-        "idle": make_idle_breathing_animation(flat),
+        "idle": idle,
         "left": left,
         "carrot": load_animation("carrot", "猪追胡萝卜", sources["carrot"], True),
         "jump": load_animation("jump", "跳跳猪", sources["jump"], False),
         "flat": flat,
         "question": load_animation("question", "疑问猪", sources["question"], False),
+        "edge_reveal": make_edge_reveal_animation(idle),
     }
 
 

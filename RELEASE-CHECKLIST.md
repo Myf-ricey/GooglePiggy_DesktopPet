@@ -1,6 +1,6 @@
 # Cross-platform Release Checklist
 
-Use this checklist before publishing GooglePiggy `v0.2.3` or a later release.
+Use this checklist before publishing GooglePiggy `v0.3.1` or a later release.
 
 ## 1. Source package
 
@@ -26,9 +26,11 @@ On Windows 10/11 x64:
 
 ```powershell
 python -m pip install -r requirements-dev.txt
+python tools\prepare_edge_tail_assets.py
 python tools\prepare_effect_assets.py
 python pig_pet.py --qa-only
 python tools\smoke_test.py
+python tools\runtime_edge_smoke.py
 .\build-release.ps1
 ```
 
@@ -43,6 +45,10 @@ Manual checks:
 - Desktop shortcut and current-user autostart work.
 - Codex thinking, completion, and permission events reach the pet.
 - Permission allow/deny is returned to Codex.
+- In responsive idle mode, dragging to each outer monitor edge hides the body and shows
+  the correct tail; clicking the tail reveals the pet.
+- Internal seams between adjacent monitors do not trigger hiding.
+- A new Codex activity automatically reveals an edge-hidden pet.
 - Existing Windows install and uninstall behavior is unchanged.
 
 ## 3. macOS verification
@@ -94,11 +100,19 @@ Commit the source overlay only after reviewing it. A `v*` tag starts both workfl
 .github/workflows/macos-release.yml
 ```
 
-Recommended tag:
+Recommended tag for the cross-platform baseline:
 
 ```text
 v0.2.3
 ```
+
+For the Windows edge-hiding follow-up, review and upload the verified artifact:
+
+```text
+releases/GifPigDesktopPet-windows-x64.zip
+```
+
+The companion description is `RELEASE-NOTES-v0.3.1.md`.
 
 Attach these locally verified universal Mac assets to the GitHub Release:
 

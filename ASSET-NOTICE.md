@@ -11,6 +11,7 @@ Artwork files include:
 - `assets/source-gifs`
 - `assets/source-effects`
 - `assets/effects`
+- `assets/edge-tail`
 
 The MIT License applies to the software code. It does not automatically grant
 separate rights to reuse the character art outside this project.
