@@ -56,6 +56,47 @@ if (Test-Path -LiteralPath $hooksPath) {
     }
 }
 
+$claudeHome = Join-Path $HOME '.claude'
+$claudeSettingsPath = Join-Path $claudeHome 'settings.json'
+if (Test-Path -LiteralPath $claudeSettingsPath) {
+    Copy-Item -LiteralPath $claudeSettingsPath -Destination ($claudeSettingsPath + '.bak-pig-pet-uninstall') -Force
+    $claudeConfig = Get-Content -LiteralPath $claudeSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($claudeConfig.hooks) {
+        foreach ($eventProperty in @($claudeConfig.hooks.PSObject.Properties)) {
+            $groups = @($eventProperty.Value) | Where-Object { $null -ne $_ }
+            $keptGroups = @()
+            foreach ($group in $groups) {
+                $remainingHooks = @(
+                    @($group.hooks) | Where-Object {
+                        $null -ne $_ -and
+                        [string]$_.command -notlike '*claude-pig-hook.ps1*' -and
+                        ((@($_.args) -join ' ') -notlike '*claude-pig-hook.ps1*')
+                    }
+                )
+                if ($remainingHooks.Count -gt 0) {
+                    $groupCopy = [ordered]@{}
+                    foreach ($property in @($group.PSObject.Properties)) {
+                        if ($property.Name -ne 'hooks') {
+                            $groupCopy[$property.Name] = $property.Value
+                        }
+                    }
+                    $groupCopy['hooks'] = @($remainingHooks)
+                    $keptGroups += [pscustomobject]$groupCopy
+                }
+            }
+            $claudeConfig.hooks.($eventProperty.Name) = @($keptGroups)
+        }
+        $temporaryClaudeSettingsPath = $claudeSettingsPath + '.tmp'
+        $claudeSettingsJson = ($claudeConfig | ConvertTo-Json -Depth 12) + [Environment]::NewLine
+        [System.IO.File]::WriteAllText(
+            $temporaryClaudeSettingsPath,
+            $claudeSettingsJson,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        Move-Item -LiteralPath $temporaryClaudeSettingsPath -Destination $claudeSettingsPath -Force
+    }
+}
+
 Get-CimInstance Win32_Process |
     Where-Object {
         $_.Name -in @('pig_pet.exe', 'pythonw.exe') -and
@@ -63,4 +104,4 @@ Get-CimInstance Win32_Process |
     } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-Write-Host 'Autostart, desktop shortcut, and Codex hooks were removed. Program files remain.'
+Write-Host 'Autostart, desktop shortcut, Codex hooks, and Claude Code hooks were removed. Program files remain.'

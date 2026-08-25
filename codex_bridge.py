@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable local status bridge shared by Codex hooks and the desktop pet."""
+"""Portable local status bridge shared by Codex/Claude Code hooks and the desktop pet."""
 
 from __future__ import annotations
 

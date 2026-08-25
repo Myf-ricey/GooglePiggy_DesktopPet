@@ -2391,8 +2391,9 @@ class PigPet:
         body_font = load_ui_font(14)
         button_font = load_ui_font(15, bold=True)
 
-        tool_name = str(request.get("tool_name", "Codex"))
-        summary = str(request.get("summary", "Codex 正在请求权限"))
+        agent = str(request.get("agent", "Codex"))
+        tool_name = str(request.get("tool_name", agent))
+        summary = str(request.get("summary", f"{agent} 正在请求权限"))
         tool_name = repair_mojibake_text(tool_name)
         summary = repair_mojibake_text(summary)
         detail = f"{tool_name}: {summary}" if tool_name else summary
@@ -2427,7 +2428,7 @@ class PigPet:
         draw.polygon(pointer, fill=(255, 250, 244, 242))
         draw.line((398, bottom - 3, 422, bottom - 3), fill=(255, 250, 244, 255), width=4)
 
-        draw.text((left + 14, top + 12), "Codex 请求权限", fill=(48, 40, 42, 255), font=title_font)
+        draw.text((left + 14, top + 12), f"{agent} 请求权限", fill=(48, 40, 42, 255), font=title_font)
         text_y = top + 42
         for line in lines:
             draw.text((left + 18, text_y), line, fill=(76, 67, 70, 255), font=body_font)
@@ -2762,7 +2763,7 @@ class PigPet:
             return
         menu = user32.CreatePopupMenu()
         entries = [
-            (100, "状态互动（Codex）", "responsive"),
+            (100, "状态互动（Codex / Claude）", "responsive"),
             (101, "预览：呼吸待机", "idle"),
             (102, "预览：左拱", "left"),
             (103, "预览：猪追胡萝卜", "carrot"),
