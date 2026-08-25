@@ -1,9 +1,9 @@
 # GooglePiggy Desktop Pet
 
-一只会陪你和 Codex 一起工作的 Windows / macOS 桌面小猪。它会根据 Codex 的
-状态切换动作，也能在你暂时不需要它时悄悄躲进屏幕边缘。
+一只会陪你和 Codex、Claude Code 一起工作的 Windows / macOS 桌面小猪。它会根据
+CLI 的状态切换动作，也能在你暂时不需要它时悄悄躲进屏幕边缘。
 
-它不是简单贴在屏幕上的静态图片，而是一个透明置顶的小桌宠：平时轻轻呼吸，拖动时会左拱，点一下会躺平；当 Codex 正在工作时，它会追胡萝卜；任务完成时，它会跳起来庆祝，还会撒一点亮晶晶和小烟花。遇到 Codex 权限请求时，它会变成疑问猪，在头顶弹出允许/拒绝气泡，并把选择传回 Codex。
+它不是简单贴在屏幕上的静态图片，而是一个透明置顶的小桌宠：平时轻轻呼吸，拖动时会左拱，点一下会躺平；当 Codex 或 Claude Code 正在工作时，它会追胡萝卜；任务完成时，它会跳起来庆祝，还会撒一点亮晶晶和小烟花。遇到权限请求时，它会变成疑问猪，在头顶弹出允许/拒绝气泡，并把选择传回对应的 CLI。Claude Code 的联动目前仅支持 Windows。
 
 这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它已经被
 整理成可以直接安装、自由修改，并能继续扩展到不同桌面平台的开源小工具。
@@ -20,9 +20,9 @@
   收进屏幕，只露出可点击的小尾巴；点一下尾巴就会沿同样的节奏滑回。Windows 和
   macOS 都只对物理外边缘生效，内部显示器接缝不会误触发；工作、权限请求和完成状态
   会自动保持或恢复可见。
-- Codex thinking: Codex 工作或思考时，播放追胡萝卜动画。
-- Codex success: Codex 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
-- Codex permission: Codex 请求权限时，播放疑问猪，并显示允许/拒绝气泡。
+- CLI thinking: Codex 或 Claude Code 工作或思考时，播放追胡萝卜动画。
+- CLI success: Codex 或 Claude Code 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
+- CLI permission: Codex 或 Claude Code 请求权限时，播放疑问猪，并显示允许/拒绝气泡（Claude Code 目前仅支持 Windows）。
 - Right-click menu: 支持动作预览、开机自启动开关、退出。
 - Portable build: Windows 便携版不要求用户安装 Python。
 - Native Mac build: macOS 版是原生透明 AppKit 应用，运行时同样不要求 Python。
@@ -39,6 +39,7 @@
 | macOS DMG | Supported |
 | Python source run | Python 3.11+, tested with Python 3.13 |
 | Codex hooks | Optional |
+| Claude Code hooks | Optional (Windows only for now) |
 | Linux | Not supported yet |
 
 Windows 使用 layered-window APIs；macOS 使用原生 AppKit 透明浮动面板。两套运行时
@@ -157,6 +158,7 @@ The installer will:
 - create a desktop shortcut;
 - optionally enable current-user autostart;
 - install the Codex hook into `~\.codex\hooks.json`;
+- install the Claude Code hook into `~\.claude\settings.json`;
 - start the desktop pet.
 
 If you only want the pet and do not want Codex integration:
@@ -164,6 +166,15 @@ If you only want the pet and do not want Codex integration:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoCodexHooks
 ```
+
+If you only want the pet and do not want Claude Code integration:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoClaudeHooks
+```
+
+Claude Code picks up hook changes on its next restart, so restart any running
+`claude` session after installing.
 
 If you only want to run it temporarily:
 
@@ -216,12 +227,45 @@ When Codex enters `thinking`, the pig chases a carrot. When Codex emits `Stop`, 
 
 Long Codex tasks can involve many tool calls. To avoid the pig getting stuck in carrot mode, the hook also uses a small local fallback watcher after `UserPromptSubmit`. The watcher reads Codex's local session records under `~\.codex\sessions` and only emits a synthetic success when the same `session_id + turn_id` clearly reaches `task_complete`. If no usable completion signal appears, thinking state eventually expires instead of staying forever.
 
+## Claude Code Integration
+
+Claude Code integration works the same way as the Codex integration above and
+shares the same status bridge file, so the pet reacts to whichever CLI is
+currently active. The installer (unless run with `-NoClaudeHooks`) writes the
+hook wiring into `~\.claude\settings.json` (Windows only for now; macOS is not
+covered yet). Restart any running `claude` session after installing so it
+picks up the new hooks.
+
+Event mapping:
+
+| Claude Code hook event | Pig state |
+| --- | --- |
+| `SessionStart` | idle |
+| `UserPromptSubmit` | thinking |
+| `PreToolUse` | thinking |
+| `PostToolUse` | thinking |
+| `Stop` | success |
+| `PermissionRequest` | permission |
+
+`PreToolUse` and `PostToolUse` only update the pig's animation state; they
+never return a permission decision, so they cannot affect whether a tool call
+is allowed. Only `PermissionRequest` — which Claude Code fires exactly when it
+would otherwise show its own permission prompt — can allow or deny a tool
+call, and it does so through the pig's permission bubble described below. If
+GooglePiggy is not running, the hook immediately escalates back to Claude
+Code's normal permission prompt instead of blocking; the same happens if no
+decision arrives within the hook's 10-minute timeout.
+
+Unlike the Codex hook, the Claude Code hook does not need a fallback
+completion watcher: Claude Code's `Stop` event already fires synchronously
+when a turn actually finishes.
+
 ## Permission Bubble
 
-When Codex triggers a real `PermissionRequest` hook, the pet switches to the question animation and shows a small bubble above the pig:
+When Codex or Claude Code triggers a real `PermissionRequest` hook, the pet switches to the question animation and shows a small bubble above the pig:
 
-- click `允许` to send `allow` back to Codex;
-- click `拒绝` to send `deny` back to Codex.
+- click `允许` to send `allow` back to Codex or Claude Code;
+- click `拒绝` to send `deny` back to Codex or Claude Code.
 
 The permission bridge uses files under:
 
@@ -230,7 +274,7 @@ The permission bridge uses files under:
 ~/Library/Application Support/GifPigDesktopPet/permission-requests/
 ```
 
-If the user already handled the permission inside Codex, or the request expires, the pet clears the bubble and returns to the normal state.
+If the user already handled the permission inside Codex or Claude Code, or the request expires, the pet clears the bubble and returns to the normal state.
 
 Manual preview:
 
@@ -245,7 +289,7 @@ macOS:
   --preview-permission 10
 ```
 
-If this preview works but a specific Codex permission prompt does not appear on the pet, that prompt probably did not enter the `PermissionRequest` hook path and must still be handled inside Codex.
+If this preview works but a specific permission prompt does not appear on the pet, that prompt probably did not enter the `PermissionRequest` hook path and must still be handled inside Codex or Claude Code.
 
 ## Manual Status Testing
 
@@ -379,7 +423,8 @@ git push origin vNEXT
 │  ├─ source-effects/   # original effect images
 │  └─ source-gifs/      # source pig GIFs
 ├─ hooks/
-│  └─ codex-pig-hook.ps1
+│  ├─ codex-pig-hook.ps1
+│  └─ claude-pig-hook.ps1
 ├─ tools/
 │  ├─ prepare_effect_assets.py
 │  ├─ preview-permission-ui.ps1

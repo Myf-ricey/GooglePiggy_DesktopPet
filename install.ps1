@@ -1,6 +1,7 @@
 param(
     [switch]$NoAutostart,
     [switch]$NoCodexHooks,
+    [switch]$NoClaudeHooks,
     [switch]$NoDesktopShortcut,
     [switch]$NoStart
 )
@@ -10,6 +11,7 @@ $appDir = $PSScriptRoot
 $exePath = Join-Path $appDir 'pig_pet.exe'
 $launcherPath = Join-Path $appDir 'start-pig-pet.cmd'
 $hookPath = Join-Path $appDir 'hooks\codex-pig-hook.ps1'
+$claudeHookPath = Join-Path $appDir 'hooks\claude-pig-hook.ps1'
 $autostartKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $autostartName = 'GifPigDesktopPet'
 
@@ -125,7 +127,85 @@ if (-not $NoCodexHooks) {
     }
 }
 
+if (-not $NoClaudeHooks) {
+    if (-not (Test-Path -LiteralPath $claudeHookPath)) {
+        throw "Claude hook script is missing: $claudeHookPath"
+    }
+    $claudeHome = Join-Path $HOME '.claude'
+    New-Item -ItemType Directory -Force -Path $claudeHome | Out-Null
+    $claudeSettingsPath = Join-Path $claudeHome 'settings.json'
+    if (Test-Path -LiteralPath $claudeSettingsPath) {
+        Copy-Item -LiteralPath $claudeSettingsPath -Destination ($claudeSettingsPath + '.bak-pig-pet') -Force
+        $claudeConfig = Get-Content -LiteralPath $claudeSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        $claudeConfig = [pscustomobject]@{}
+    }
+    if (-not $claudeConfig.hooks) {
+        $claudeConfig | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
+    }
+
+    foreach ($eventProperty in @($claudeConfig.hooks.PSObject.Properties)) {
+        $keptGroups = @()
+        foreach ($group in @($eventProperty.Value) | Where-Object { $null -ne $_ }) {
+            $remainingHooks = @(
+                @($group.hooks) | Where-Object {
+                    $null -ne $_ -and
+                    [string]$_.command -notlike '*claude-pig-hook.ps1*' -and
+                    ((@($_.args) -join ' ') -notlike '*claude-pig-hook.ps1*')
+                }
+            )
+            if ($remainingHooks.Count -gt 0) {
+                $groupCopy = [ordered]@{}
+                foreach ($property in @($group.PSObject.Properties)) {
+                    if ($property.Name -ne 'hooks') {
+                        $groupCopy[$property.Name] = $property.Value
+                    }
+                }
+                $groupCopy['hooks'] = @($remainingHooks)
+                $keptGroups += [pscustomobject]$groupCopy
+            }
+        }
+        $claudeConfig.hooks.($eventProperty.Name) = @($keptGroups)
+    }
+
+    $claudeEventTimeouts = [ordered]@{
+        SessionStart = 10
+        UserPromptSubmit = 10
+        PreToolUse = 10
+        PostToolUse = 10
+        Stop = 10
+        PermissionRequest = 600
+    }
+    foreach ($eventName in $claudeEventTimeouts.Keys) {
+        $existing = @($claudeConfig.hooks.$eventName) | Where-Object { $null -ne $_ }
+        $newGroup = [pscustomobject]@{
+            hooks = @(
+                [pscustomobject]@{
+                    type = 'command'
+                    command = 'powershell.exe'
+                    args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $claudeHookPath)
+                    timeout = $claudeEventTimeouts[$eventName]
+                }
+            )
+        }
+        $updated = @($newGroup) + @($existing)
+        if ($claudeConfig.hooks.PSObject.Properties.Name -contains $eventName) {
+            $claudeConfig.hooks.$eventName = $updated
+        } else {
+            $claudeConfig.hooks | Add-Member -NotePropertyName $eventName -NotePropertyValue $updated
+        }
+    }
+    $temporaryClaudeSettingsPath = $claudeSettingsPath + '.tmp'
+    $claudeSettingsJson = ($claudeConfig | ConvertTo-Json -Depth 12) + [Environment]::NewLine
+    [System.IO.File]::WriteAllText(
+        $temporaryClaudeSettingsPath,
+        $claudeSettingsJson,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    Move-Item -LiteralPath $temporaryClaudeSettingsPath -Destination $claudeSettingsPath -Force
+}
+
 if (-not $NoStart) {
     Start-Process -FilePath $launchTarget -WorkingDirectory $appDir
 }
-Write-Host 'GIF Pig Desktop Pet installed. Codex hooks take effect after Codex restarts.'
+Write-Host 'GIF Pig Desktop Pet installed. Codex hooks take effect after Codex restarts, and Claude Code hooks take effect after Claude Code restarts.'
