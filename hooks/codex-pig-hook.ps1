@@ -431,10 +431,10 @@ function New-SinglePatchPermissionSummary {
     )
 
     switch ($Verb) {
-        '创建' { return "Codex 准备创建文件“$Path”并写入内容，是否允许？" }
-        '删除' { return "Codex 准备删除文件“$Path”，是否允许？" }
-        '移动' { return "Codex 准备把文件移动到“$Path”，是否允许？" }
-        default { return "Codex 准备修改文件“$Path”，是否允许执行本次修改？" }
+        '创建' { return ('Codex 准备创建文件“{0}”并写入内容，是否允许？' -f $Path) }
+        '删除' { return ('Codex 准备删除文件“{0}”，是否允许？' -f $Path) }
+        '移动' { return ('Codex 准备把文件移动到“{0}”，是否允许？' -f $Path) }
+        default { return ('Codex 准备修改文件“{0}”，是否允许执行本次修改？' -f $Path) }
     }
 }
 
