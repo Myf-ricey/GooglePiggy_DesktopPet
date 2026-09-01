@@ -526,6 +526,36 @@ def main() -> None:
             ),
         )
 
+        current_apply_patch_permission = {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "session-current-apply-patch",
+            "turn_id": "turn-current-apply-patch",
+            "tool_name": "apply_patch",
+            "tool_input": {
+                "command": (
+                    "*** Begin Patch\n"
+                    "*** Update File: "
+                    f"{Path.home()}/Desktop/1.txt\n"
+                    "@@\n"
+                    "-test\n"
+                    "+678\n"
+                    "*** End Patch"
+                )
+            },
+        }
+        test_permission(
+            executable,
+            env,
+            state_dir,
+            "allow",
+            current_apply_patch_permission,
+            "修改文件",
+            (
+                "Codex 准备修改文件"
+                f"“{Path.home()}/Desktop/1.txt”，是否允许执行本次修改？"
+            ),
+        )
+
         recovered_session_id = "session-recover-tool-details"
         recovered_session_cwd = Path.home() / "Documents" / "权限测试工程"
         recovered_update_turn = "turn-recover-update"
@@ -534,6 +564,9 @@ def main() -> None:
         recovered_shell_patch_turn = "turn-recover-shell-patch"
         recovered_shell_patch_no_reason_turn = (
             "turn-recover-shell-patch-no-reason"
+        )
+        recovered_code_mode_apply_patch_turn = (
+            "turn-recover-code-mode-apply-patch"
         )
         recovered_open_turn = "turn-recover-open-app"
         recovered_brightness_turn = "turn-recover-brightness"
@@ -580,6 +613,17 @@ def main() -> None:
                         "-旧配置\n"
                         "+新配置\n"
                         "*** End Patch\n"
+                    ),
+                ),
+                (
+                    recovered_code_mode_apply_patch_turn,
+                    "exec",
+                    (
+                        'const patch = "*** Begin Patch\\n'
+                        "*** Update File: "
+                        f"{Path.home()}/Desktop/code-mode.txt\\n"
+                        "@@\\n-old\\n+new\\n*** End Patch\";"
+                        "text(await tools.apply_patch(patch));"
                     ),
                 ),
                 (
@@ -686,6 +730,27 @@ def main() -> None:
             (
                 "Codex 准备修改文件"
                 f"“{Path.home()}/Documents/权限测试/配置.txt”，"
+                "是否允许执行本次修改？"
+            ),
+        )
+
+        code_mode_patch_without_details = {
+            "hook_event_name": "PermissionRequest",
+            "session_id": recovered_session_id,
+            "turn_id": recovered_code_mode_apply_patch_turn,
+            "tool_name": "apply_patch",
+            "tool_input": {},
+        }
+        test_permission(
+            executable,
+            env,
+            state_dir,
+            "allow",
+            code_mode_patch_without_details,
+            "修改文件",
+            (
+                "Codex 准备修改文件"
+                f"“{Path.home()}/Desktop/code-mode.txt”，"
                 "是否允许执行本次修改？"
             ),
         )

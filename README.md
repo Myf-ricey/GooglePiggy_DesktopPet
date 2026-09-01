@@ -468,6 +468,11 @@ macOS 可运行：
 
 If preview works, the pet UI is fine. The specific Codex prompt may not be emitted as a `PermissionRequest` hook.
 
+Codex 官方 App 更新后如果出现兼容性回退，可运行
+`python3 tools/codex_hook_snapshot.py`，并按
+[CODEX-HOOK-COMPATIBILITY.md](CODEX-HOOK-COMPATIBILITY.md) 中的协议基线和日志路径
+逐层定位。
+
 ### Chinese text shows as squares
 
 The app tries Windows CJK fonts such as Microsoft YaHei and SimHei. If those fonts are missing or disabled, install a CJK-capable font and restart the pet.

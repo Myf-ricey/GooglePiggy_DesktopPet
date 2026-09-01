@@ -159,6 +159,15 @@ Hook 后完全重启 Codex 桌面版。只重启不会自动信任。
 ~/Library/Application Support/GifPigDesktopPet/codex-hook-events.jsonl
 ```
 
+Codex 官方 App 更新后如果出现联动回退，可运行：
+
+```zsh
+python3 tools/codex_hook_snapshot.py
+```
+
+协议基线、日志路径和分层定位步骤见
+[CODEX-HOOK-COMPATIBILITY.md](CODEX-HOOK-COMPATIBILITY.md)。
+
 ## 卸载
 
 双击发布文件夹内的 `uninstall.command`。它会移除：

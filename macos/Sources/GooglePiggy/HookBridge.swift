@@ -184,9 +184,11 @@ private func patchPermissionSummary(
     _ input: Any?,
     baseDirectory: String = ""
 ) -> String? {
-    let patch = directOrNamedString(
+    var patch = directOrNamedString(
         input,
-        names: ["input", "patch", "patch_text", "text", "content"]
+        names: [
+            "command", "input", "patch", "patch_text", "text", "content",
+        ]
     )
     guard !patch.isEmpty else {
         return nil
@@ -198,6 +200,23 @@ private func patchPermissionSummary(
         ("*** Delete File:", "删除"),
         ("*** Move to:", "移动"),
     ]
+    let hasOperationLine = patch.components(separatedBy: .newlines)
+        .contains { line in
+            markers.contains { marker, _ in line.hasPrefix(marker) }
+        }
+    if !hasOperationLine,
+        patch.contains("*** Begin Patch"),
+        patch.contains("\\n")
+    {
+        // Code-mode session transcripts store JavaScript string literals, so
+        // their patch newlines can still be escaped when direct hook details
+        // are unavailable. Decode only the newline escapes needed to recover
+        // the patch markers; direct current-version payloads are unchanged.
+        patch = patch
+            .replacingOccurrences(of: "\\r\\n", with: "\n")
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\r", with: "\n")
+    }
     var operations: [(verb: String, path: String)] = []
     for line in patch.components(separatedBy: .newlines) {
         for (marker, verb) in markers where line.hasPrefix(marker) {
