@@ -19,6 +19,9 @@ try {
     & $venvPython pig_pet.py --qa-only
     & $venvPython tools\smoke_test.py
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks\codex-pig-hook.ps1 -SelfTest
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Windows Codex hook self-test failed.'
+    }
     & $venvPython -m PyInstaller --noconfirm --clean pig_pet.spec
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'

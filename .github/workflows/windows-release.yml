@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -22,13 +24,16 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install -r requirements-dev.txt
 
+      - name: Validate Windows hook
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
+
       - name: Prepare assets and validate
         run: |
           python tools/prepare_edge_tail_assets.py
           python tools/prepare_effect_assets.py
           python pig_pet.py --qa-only
           python tools/smoke_test.py
-          powershell -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
 
       - name: Build portable folder
         run: python -m PyInstaller --noconfirm --clean pig_pet.spec

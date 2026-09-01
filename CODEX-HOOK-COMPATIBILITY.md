@@ -69,9 +69,10 @@ python3 tools/codex_hook_snapshot.py
 
 修复：
 
-- 优先解析 `tool_input.command`，同时保留旧字段兼容；
+- macOS 和 Windows 都优先解析 `tool_input.command`，同时保留旧字段兼容；
 - 当直接详情缺失时，可从代码模式 session 记录中还原带 `\\n` 转义的补丁；
 - `tools/test_macos_release.py` 固化当前真实载荷和代码模式回退两项测试。
+- Windows Hook 的 `-SelfTest` 固化同一载荷，并由 Windows GitHub Actions 在打包前执行。
 
 ## 更新后快速定位
 

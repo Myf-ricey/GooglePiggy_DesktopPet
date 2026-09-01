@@ -393,10 +393,134 @@ function Get-ObjectPropertyValue {
     return $null
 }
 
+function Resolve-PermissionPath {
+    param(
+        [string]$Path,
+        [string]$BaseDirectory = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
+    }
+    $value = $Path.Trim().Trim('"').Trim("'")
+    if ($value -eq '~') {
+        $value = $HOME
+    } elseif ($value.StartsWith('~\') -or $value.StartsWith('~/')) {
+        $value = Join-Path $HOME $value.Substring(2)
+    }
+    $value = [Environment]::ExpandEnvironmentVariables($value)
+    if (-not [System.IO.Path]::IsPathRooted($value)) {
+        $base = if ([string]::IsNullOrWhiteSpace($BaseDirectory)) {
+            (Get-Location).Path
+        } else {
+            $BaseDirectory
+        }
+        $value = Join-Path $base $value
+    }
+    try {
+        $value = [System.IO.Path]::GetFullPath($value)
+    } catch {
+    }
+    return (Protect-PermissionText -Text $value)
+}
+
+function New-SinglePatchPermissionSummary {
+    param(
+        [string]$Verb,
+        [string]$Path
+    )
+
+    switch ($Verb) {
+        '创建' { return "Codex 准备创建文件“$Path”并写入内容，是否允许？" }
+        '删除' { return "Codex 准备删除文件“$Path”，是否允许？" }
+        '移动' { return "Codex 准备把文件移动到“$Path”，是否允许？" }
+        default { return "Codex 准备修改文件“$Path”，是否允许执行本次修改？" }
+    }
+}
+
+function Get-PatchPermissionSummary {
+    param(
+        [string]$Patch,
+        [string]$BaseDirectory = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Patch)) {
+        return $null
+    }
+    $markers = @(
+        [pscustomobject]@{ Prefix = '*** Update File:'; Verb = '修改' },
+        [pscustomobject]@{ Prefix = '*** Add File:'; Verb = '创建' },
+        [pscustomobject]@{ Prefix = '*** Delete File:'; Verb = '删除' },
+        [pscustomobject]@{ Prefix = '*** Move to:'; Verb = '移动' }
+    )
+    $operations = @()
+    foreach ($line in ($Patch -split "`r?`n")) {
+        foreach ($marker in $markers) {
+            if (-not $line.StartsWith($marker.Prefix)) {
+                continue
+            }
+            $path = Resolve-PermissionPath `
+                -Path $line.Substring($marker.Prefix.Length) `
+                -BaseDirectory $BaseDirectory
+            if (-not [string]::IsNullOrWhiteSpace($path)) {
+                $operations += [pscustomobject]@{
+                    Verb = $marker.Verb
+                    Path = $path
+                }
+            }
+            break
+        }
+    }
+    if ($operations.Count -eq 0) {
+        return $null
+    }
+    if ($operations.Count -eq 1) {
+        return (New-SinglePatchPermissionSummary `
+            -Verb $operations[0].Verb `
+            -Path $operations[0].Path)
+    }
+    $details = ($operations | ForEach-Object {
+        '{0}文件“{1}”' -f $_.Verb, $_.Path
+    }) -join '；'
+    return "Codex 准备$details，是否允许？"
+}
+
 function Get-PermissionSummary {
     param([object]$Payload)
 
     $toolInput = Get-ObjectPropertyValue -Object $Payload -Names @('tool_input', 'input')
+    $toolName = [string](Get-ObjectPropertyValue -Object $Payload -Names @('tool_name', 'toolName', 'name'))
+    $command = [string](Get-ObjectPropertyValue -Object $toolInput -Names @(
+        'command',
+        'input',
+        'patch',
+        'patch_text',
+        'text',
+        'content'
+    ))
+    $inputDirectory = [string](Get-ObjectPropertyValue -Object $toolInput -Names @(
+        'workdir',
+        'cwd',
+        'working_directory'
+    ))
+    $payloadDirectory = [string](Get-ObjectPropertyValue -Object $Payload -Names @(
+        'workdir',
+        'cwd',
+        'working_directory'
+    ))
+    $baseDirectory = if (-not [string]::IsNullOrWhiteSpace($inputDirectory)) {
+        $inputDirectory
+    } else {
+        $payloadDirectory
+    }
+    if ($toolName -like '*apply_patch*' -or $command.Contains('*** Begin Patch')) {
+        $patchSummary = Get-PatchPermissionSummary `
+            -Patch $command `
+            -BaseDirectory $baseDirectory
+        if (-not [string]::IsNullOrWhiteSpace($patchSummary)) {
+            return $patchSummary
+        }
+    }
     $candidate = Get-ObjectPropertyValue -Object $toolInput -Names @(
         'description',
         'justification',
@@ -598,6 +722,25 @@ if ($SelfTest) {
     $actualSummary = Get-PermissionSummary -Payload $currentApplyPatchPayload
     if ($actualSummary -ne $expectedSummary) {
         throw "Current apply_patch summary mismatch.`nExpected: $expectedSummary`nActual: $actualSummary"
+    }
+
+    $relativeApplyPatchPayload = [pscustomobject]@{
+        hook_event_name = 'PermissionRequest'
+        tool_name = 'apply_patch'
+        cwd = 'C:\Users\Test\project'
+        tool_input = [pscustomobject]@{
+            command = @'
+*** Begin Patch
+*** Add File: generated/new.txt
++hello
+*** End Patch
+'@
+        }
+    }
+    $expectedRelativeSummary = 'Codex 准备创建文件“C:\Users\Test\project\generated\new.txt”并写入内容，是否允许？'
+    $actualRelativeSummary = Get-PermissionSummary -Payload $relativeApplyPatchPayload
+    if ($actualRelativeSummary -ne $expectedRelativeSummary) {
+        throw "Relative apply_patch summary mismatch.`nExpected: $expectedRelativeSummary`nActual: $actualRelativeSummary"
     }
 
     $allowOutput = New-CodexPermissionOutput -Decision 'allow' | ConvertFrom-Json
