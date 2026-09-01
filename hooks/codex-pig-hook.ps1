@@ -1,4 +1,6 @@
-param()
+param(
+    [switch]$SelfTest
+)
 
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -574,6 +576,37 @@ function Invoke-PigPermissionRequest {
         -SessionId $SessionId `
         -TurnId $TurnId `
         -Reason 'permission timeout')
+}
+
+if ($SelfTest) {
+    $currentApplyPatchPayload = [pscustomobject]@{
+        hook_event_name = 'PermissionRequest'
+        tool_name = 'apply_patch'
+        cwd = 'C:\Users\Test\project'
+        tool_input = [pscustomobject]@{
+            command = @'
+*** Begin Patch
+*** Update File: C:\Users\Test\Desktop\1.txt
+@@
+-test
++678
+*** End Patch
+'@
+        }
+    }
+    $expectedSummary = 'Codex 准备修改文件“C:\Users\Test\Desktop\1.txt”，是否允许执行本次修改？'
+    $actualSummary = Get-PermissionSummary -Payload $currentApplyPatchPayload
+    if ($actualSummary -ne $expectedSummary) {
+        throw "Current apply_patch summary mismatch.`nExpected: $expectedSummary`nActual: $actualSummary"
+    }
+
+    $allowOutput = New-CodexPermissionOutput -Decision 'allow' | ConvertFrom-Json
+    if ([string]$allowOutput.hookSpecificOutput.decision.behavior -ne 'allow') {
+        throw 'PermissionRequest allow output does not use decision.behavior.'
+    }
+
+    Write-Output 'windows_hook_self_test=ok'
+    return
 }
 
 try {

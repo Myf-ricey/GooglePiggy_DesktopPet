@@ -28,6 +28,7 @@ jobs:
           python tools/prepare_effect_assets.py
           python pig_pet.py --qa-only
           python tools/smoke_test.py
+          powershell -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
 
       - name: Build portable folder
         run: python -m PyInstaller --noconfirm --clean pig_pet.spec

@@ -18,6 +18,7 @@ try {
     & $venvPython tools\prepare_effect_assets.py
     & $venvPython pig_pet.py --qa-only
     & $venvPython tools\smoke_test.py
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks\codex-pig-hook.ps1 -SelfTest
     & $venvPython -m PyInstaller --noconfirm --clean pig_pet.spec
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
