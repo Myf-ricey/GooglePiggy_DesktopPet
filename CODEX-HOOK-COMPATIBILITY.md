@@ -74,6 +74,27 @@ python3 tools/codex_hook_snapshot.py
 - `tools/test_macos_release.py` 固化当前真实载荷和代码模式回退两项测试。
 - Windows Hook 的 `-SelfTest` 固化同一载荷，并由 Windows GitHub Actions 在打包前执行。
 
+## 2026-09-02 Windows 端信任流程补完
+
+症状：更新 Hook 并重启 Codex 后，猪猪保持待机；思考、工具调用、完成和权限请求
+都没有联动。`pig-heartbeat.json` 持续更新，但 `codex-hook-events.jsonl` 没有新事件。
+
+根因：Codex 会按 Hook 的精确定义保存信任哈希。安装目录或命令发生变化后，六个
+GooglePiggy Hook 都会变成 `Modified since last trusted - review required`；只重启
+Codex 不会自动信任它们。Windows 安装器还会优先调用 PATH 中的旧版 Codex CLI，
+它可能与桌面 App 内置 CLI 版本不同，导致安装阶段没有使用实际运行时检查配置。
+
+修复：
+
+- Windows 安装器优先使用 `%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe` 中最新的
+  桌面 App 内置 CLI，找不到时才回退到 PATH 中的 `codex`；
+- macOS 安装器优先使用 ChatGPT/Codex App 内置 CLI，再回退到终端 PATH；
+- Windows 安装结束后明确提示进入 `/hooks` 审查六个 GooglePiggy Hook，并说明旧任务
+  不会热加载新的 Hook 信任快照；
+- 黑盒验证覆盖完整链路：`SessionStart` → `UserPromptSubmit` → `PreToolUse` →
+  `PermissionRequest` → `PermissionDecision` → `PostToolUse` → `Stop`，同时确认工作时
+  切换胡萝卜动画、权限时切换问号动画、允许决定被 Codex 接受。
+
 ## 更新后快速定位
 
 1. 运行 `python3 tools/codex_hook_snapshot.py`，保存更新前后输出并比较 App 内置

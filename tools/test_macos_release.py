@@ -341,6 +341,8 @@ def main() -> None:
         assert "--preview-edge-hide" in main_source
         assert "/hooks" in installer_source
         assert "Trust all and continue" in installer_source
+        assert "/Applications/ChatGPT.app/Contents/Resources/codex" in installer_source
+        assert '"$CODEX_CLI" features enable hooks' in installer_source
         assert 'pkill -x "GooglePiggy"' in installer_source
 
     subprocess.run(

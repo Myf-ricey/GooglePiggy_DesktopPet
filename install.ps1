@@ -12,6 +12,31 @@ $launcherPath = Join-Path $appDir 'start-pig-pet.cmd'
 $hookPath = Join-Path $appDir 'hooks\codex-pig-hook.ps1'
 $autostartKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $autostartName = 'GifPigDesktopPet'
+$codexCliPath = $null
+
+function Get-CodexCliPath {
+    $desktopBinRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
+    if (Test-Path -LiteralPath $desktopBinRoot) {
+        $desktopCli = Get-ChildItem -LiteralPath $desktopBinRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $candidate = Join-Path $_.FullName 'codex.exe'
+                if (Test-Path -LiteralPath $candidate) {
+                    Get-Item -LiteralPath $candidate
+                }
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($null -ne $desktopCli) {
+            return $desktopCli.FullName
+        }
+    }
+
+    $pathCommand = Get-Command codex -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        return $pathCommand.Source
+    }
+    return $null
+}
 
 if (Test-Path -LiteralPath $exePath) {
     $launchTarget = $exePath
@@ -120,12 +145,26 @@ if (-not $NoCodexHooks) {
     )
     Move-Item -LiteralPath $temporaryHooksPath -Destination $hooksPath -Force
 
-    if (Get-Command codex -ErrorAction SilentlyContinue) {
-        cmd.exe /d /c "codex features enable hooks >nul 2>nul" | Out-Null
+    $codexCliPath = Get-CodexCliPath
+    if (-not [string]::IsNullOrWhiteSpace($codexCliPath)) {
+        & $codexCliPath features enable hooks *> $null
     }
 }
 
 if (-not $NoStart) {
     Start-Process -FilePath $launchTarget -WorkingDirectory $appDir
 }
-Write-Host 'GIF Pig Desktop Pet installed. Codex hooks take effect after Codex restarts.'
+Write-Host 'GIF Pig Desktop Pet installed.'
+if (-not $NoCodexHooks) {
+    Write-Host ''
+    Write-Host 'Codex hook trust review is still required:'
+    if (-not [string]::IsNullOrWhiteSpace($codexCliPath)) {
+        Write-Host ('1. Open PowerShell and run: & "{0}"' -f $codexCliPath)
+    } else {
+        Write-Host '1. Open PowerShell and run: codex'
+    }
+    Write-Host '2. Enter: /hooks'
+    Write-Host '3. Review the six GooglePiggy hooks and trust them. Use Trust all only when every listed hook is known.'
+    Write-Host '4. Start a new Codex task or fully restart Codex Desktop. Existing tasks keep their previous hook snapshot.'
+    Write-Host 'Restarting alone does not trust new or changed hooks.'
+}
