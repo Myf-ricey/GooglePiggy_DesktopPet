@@ -65,6 +65,8 @@ if (-not $NoDesktopShortcut) {
     $shortcut.TargetPath = $launchTarget
     $shortcut.WorkingDirectory = $appDir
     $shortcut.Description = 'GIF Pig Desktop Pet'
+    $iconPath = Join-Path $appDir 'assets\icons\piggy-idle-v2.ico'
+    if (Test-Path -LiteralPath $iconPath) { $shortcut.IconLocation = $iconPath + ',0' }
     $shortcut.Save()
 }
 

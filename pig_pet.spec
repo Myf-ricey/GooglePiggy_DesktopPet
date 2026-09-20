@@ -38,6 +38,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="pig_pet",
+    icon=str(project_dir / "assets" / "icons" / "piggy-idle-v2.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
