@@ -1,4 +1,4 @@
-# macOS Release Checklist (`v0.3.2`)
+# macOS Release Checklist (`v0.4.0`)
 
 ## 1. Local build
 
@@ -27,7 +27,7 @@ macos_release_test=ok
 codesign --verify --deep --strict build/macos/GooglePiggy.app
 lipo -info build/macos/GooglePiggy.app/Contents/MacOS/GooglePiggy
 hdiutil verify dist/GooglePiggy-macos-universal.dmg
-unzip -tq dist/GooglePiggy-macos-universal.zip
+/Applications/Keka.app/Contents/MacOS/Keka --cli 7zz t dist/GooglePiggy-macos-universal.zip
 ```
 
 `lipo` must report both `arm64` and `x86_64`.
@@ -37,7 +37,7 @@ unzip -tq dist/GooglePiggy-macos-universal.zip
 For one download that supports all Macs, upload:
 
 ```text
-GooglePiggy-macos-universal-v0.3.2.zip
+GooglePiggy-macos-universal-v0.4.0.zip
 GooglePiggy-macos-universal.dmg
 ```
 
@@ -87,3 +87,12 @@ GooglePiggy-macos-x64.dmg
 - Click every tail and confirm the pet reveals without success fireworks. Start a Codex task
   while hidden and confirm the pet reveals automatically in the correct working state.
 - Publish `README-MAC.md` with the release.
+
+## v0.4.0 regression checks
+
+- Run `tools/test_leisure_native.py` after building the app.
+- Compile `tests/leisure/main.swift` with `LeisureRoutine.swift` and run it.
+- Compile `tests/thread-animation/main.swift` with `ThreadAnimationClock.swift` and run it.
+- Verify the context menu has no animation previews.
+- Verify the installed LaunchAgent and Codex hooks reference the production app.
+- Publish the macOS-only tag `v0.4.0-macos`; retain Windows releases.

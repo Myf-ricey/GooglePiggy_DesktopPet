@@ -8,7 +8,8 @@
 这个项目最早只是一个“我想让工作状态变得更可爱一点”的小点子。现在它已经被
 整理成可以直接安装、自由修改，并能继续扩展到不同桌面平台的开源小工具。
 
-> **当前版本：`v0.3.2`。** Windows 和 macOS 现在都支持完整的空闲触边隐藏、尾巴
+> **macOS 最新版本：[v0.4.0](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.4.0-macos)**，新增多任务动画进度、睡眠与偷吃互动，移除预览菜单。详见 [macOS 说明](README-MAC.md)。Windows 保持 `v0.3.2`。
+> Windows 和 macOS 现在都支持完整的空闲触边隐藏、尾巴
 > 进出动画和点尾跳回；两端使用一致的边缘交互规则。
 
 ## Features
@@ -23,7 +24,7 @@
 - Codex thinking: Codex 工作或思考时，播放追胡萝卜动画。
 - Codex success: Codex 完成回答时，播放跳跳猪庆祝动画，并显示小火花和烟花。
 - Codex permission: Codex 请求权限时，播放疑问猪，并显示允许/拒绝气泡。
-- Right-click menu: 支持动作预览、开机自启动开关、退出。
+- Right-click menu: macOS 提供状态互动、休息模式、自启动开关、Hook 授权说明和退出；Windows 保留动作预览。
 - Portable build: Windows 便携版不要求用户安装 Python。
 - Native Mac build: macOS 版是原生透明 AppKit 应用，运行时同样不要求 Python。
 - Open-source ready: 源码、素材、构建脚本、GitHub Actions workflow 都在仓库里。
@@ -33,8 +34,8 @@
 | Item | Status |
 | --- | --- |
 | Windows 10/11 x64 | Supported (`v0.3.2`, including tail edge hiding) |
-| macOS 13+ Apple Silicon | Supported (`v0.3.2`, including tail edge hiding) |
-| macOS 13+ Intel | Supported (`v0.3.2`, including tail edge hiding) |
+| macOS 13+ Apple Silicon | Supported (`v0.4.0`) |
+| macOS 13+ Intel | Supported (`v0.4.0`) |
 | Portable ZIP | Supported |
 | macOS DMG | Supported |
 | Python source run | Python 3.11+, tested with Python 3.13 |

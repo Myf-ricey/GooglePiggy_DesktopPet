@@ -652,6 +652,8 @@ private func permissionSummary(
         candidate = justificationFromToolInput(input)
     }
     let chineseReason = cleanedChinesePermissionReason(candidate)
+    // Preserve the explanation supplied with this exact permission request.
+    if !chineseReason.isEmpty { return chineseReason }
     let normalizedTool = rawTool.lowercased()
     if normalizedTool.contains("apply_patch") {
         if let summary = patchPermissionSummary(
@@ -695,6 +697,14 @@ private func permissionSummary(
     }
 
     let command = commandFromToolInput(input)
+    // Some hook versions omit the reason. Only recover it when the logged
+    // command matches this request, so another call's explanation cannot leak in.
+    if !command.isEmpty {
+        let loggedInput = sessionToolInput(sessionID: sessionID, turnID: turnID, rawTool: rawTool)
+        let loggedCommand = commandFromToolInput(loggedInput)
+        let loggedReason = cleanedChinesePermissionReason(justificationFromToolInput(loggedInput))
+        if loggedCommand == command, !loggedReason.isEmpty { return loggedReason }
+    }
     if let summary = commandPermissionSummary(
         command,
         baseDirectory: baseDirectory
@@ -971,6 +981,31 @@ func runCodexHook() {
         let sessionID = payload["session_id"] as? String ?? ""
         let turnID = payload["turn_id"] as? String ?? ""
 
+        let agentID = payload["agent_id"] as? String ?? ""
+        hookActorID = agentID.isEmpty ? sessionID : agentID
+        for key in ["agent_id", "agent_type", "cwd", "transcript_path", "trigger", "tool_name", "tool_use_id"] {
+            if let value = payload[key] { hookMetadata[key] = value }
+        }
+        if let prompt = payload["prompt"] as? String { hookMetadata["prompt_preview"] = String(prompt.prefix(100)) }
+        // Continue may start a new turn without UserPromptSubmit. Trust the
+        // local lifecycle record, never a late tool completion by itself.
+        if agentID.isEmpty, ["PreToolUse", "PostToolUse", "Stop"].contains(event),
+            let prior = readJSONDictionary(defaultStatusURL()),
+            prior["turn_id"] as? String != turnID,
+            let latest = latestLifecycle(at:lookupThreadMetadata(sessionID).rollout),
+            latest.turn == turnID, latest.kind != "turn_aborted",
+            latest.date.timeIntervalSince1970 > (prior["received_at"] as? Double ?? 0) {
+            try writeBridgeState(status:"working",event:"ResumeDetected",sessionID:sessionID,turnID:turnID)
+            spawnCompletionWatcher(sessionID:sessionID,turnID:turnID)
+        }
+        if let prior = readJSONDictionary(defaultStatusURL()),
+            let priorTurn = prior["turn_id"] as? String,
+            !priorTurn.isEmpty, !turnID.isEmpty, priorTurn != turnID,
+            prior["event"] as? String != "SubagentStart",
+            !["UserPromptSubmit", "PreCompact", "SubagentStart", "SubagentStop"].contains(event) {
+            print("{}")
+            return
+        }
         if event == "PermissionRequest" {
             print(
                 handlePermissionRequest(
@@ -985,11 +1020,42 @@ func runCodexHook() {
         let mapping: [String: String] = [
             "SessionStart": "idle",
             "UserPromptSubmit": "thinking",
-            "PreToolUse": "thinking",
-            "PostToolUse": "thinking",
+            "PreToolUse": "working",
+            "PostToolUse": "working",
             "Stop": "success",
+            "Interrupt": "interrupted",
+            "PreCompact": "compacting",
+            "PostCompact": "success",
+            "SubagentStart": "working",
+            "SubagentStop": "success",
+            "SessionEnd": "idle",
         ]
         guard let status = mapping[event] else {
+            print("{}")
+            return
+        }
+
+        // Keep compaction visible until its matching completion. Late tool
+        // notifications must not displace the packing animation.
+        if let existing = readJSONDictionary(defaultStatusURL()) {
+            let active = existing["status"] as? String ?? ""
+            if active == "compacting", ["PreToolUse", "PostToolUse", "SessionStart"].contains(event) {
+                print("{}")
+                return
+            }
+            if event == "PostCompact", (active != "compacting"
+                || existing["session_id"] as? String != sessionID) {
+                print("{}")
+                return
+            }
+        }
+
+        // A canceled tool may finish after Interrupt. Only new work may
+        // release the held question pose, never that late completion.
+        if ["PostToolUse", "PostCompact", "Stop", "SessionStart"].contains(event),
+            let existing = readJSONDictionary(defaultStatusURL()),
+            existing["status"] as? String == "interrupted"
+        {
             print("{}")
             return
         }
@@ -1116,6 +1182,7 @@ private func sessionHasTaskComplete(_ url: URL, turnID: String) -> Bool {
 }
 
 func runCompletionWatcher(sessionID: String, turnID: String) {
+    hookActorID = sessionID
     guard !sessionID.isEmpty, !turnID.isEmpty else {
         return
     }
@@ -1124,7 +1191,7 @@ func runCompletionWatcher(sessionID: String, turnID: String) {
     while Date() < deadline {
         if let state = readJSONDictionary(defaultStatusURL()) {
             guard
-                state["status"] as? String == "thinking",
+                ["thinking", "working", "compacting"].contains(state["status"] as? String ?? ""),
                 state["session_id"] as? String == sessionID,
                 state["turn_id"] as? String == turnID
             else {
@@ -1139,7 +1206,7 @@ func runCompletionWatcher(sessionID: String, turnID: String) {
         if let sessionURL, sessionHasTaskComplete(sessionURL, turnID: turnID) {
             if let state = readJSONDictionary(defaultStatusURL()) {
                 guard
-                    state["status"] as? String == "thinking",
+                    ["thinking", "working", "compacting"].contains(state["status"] as? String ?? ""),
                     state["session_id"] as? String == sessionID,
                     state["turn_id"] as? String == turnID
                 else {

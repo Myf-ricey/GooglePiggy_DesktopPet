@@ -12,6 +12,8 @@ Artwork files include:
 - `assets/source-effects`
 - `assets/effects`
 - `assets/edge-tail`
+- `assets/macos-resources` (approved native animation frames)
+- `assets/custom-carrot` (user-provided carrot, background removed)
 
 The MIT License applies to the software code. It does not automatically grant
 separate rights to reuse the character art outside this project.

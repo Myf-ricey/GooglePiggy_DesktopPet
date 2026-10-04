@@ -32,6 +32,9 @@ jobs:
       - name: Install animation build dependencies
         run: python -m pip install -r requirements-macos-build.txt
 
+      - name: Install Keka ZIP packager
+        run: brew install --cask keka
+
       - name: Build and test native macOS release
         env:
           BUILD_UNIVERSAL: "0"

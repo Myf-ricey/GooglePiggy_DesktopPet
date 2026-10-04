@@ -10,3 +10,6 @@ qa/
 learning-materials/
 pig-pet-error.log
 *.log
+
+.DS_Store
+output/

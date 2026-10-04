@@ -5,7 +5,7 @@ import Foundation
 signal(SIGPIPE, SIG_IGN)
 
 let arguments = Array(CommandLine.arguments.dropFirst())
-var startupEdgePreview: DesktopEdge? = nil
+var startupEdgePreview: DesktopEdge? = (Bundle.main.object(forInfoDictionaryKey: "GooglePiggyPreviewEdge") as? String).flatMap(DesktopEdge.init(rawValue:))
 
 if arguments.first == "--preview-edge-hide" {
     guard

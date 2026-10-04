@@ -7,7 +7,7 @@ let stateDirectoryName = "GifPigDesktopPet"
 let autostartLabel = "com.myf-ricey.GooglePiggyDesktopPet.autostart"
 
 let validStatuses: Set<String> = [
-    "idle", "thinking", "success", "error", "permission",
+    "idle", "thinking", "working", "compacting", "interrupted", "success", "error", "permission",
 ]
 
 func defaultStateDirectory() -> URL {
@@ -24,11 +24,14 @@ func defaultStateDirectory() -> URL {
         for: .applicationSupportDirectory,
         in: .userDomainMask
     ).first!
-    return support.appendingPathComponent(stateDirectoryName, isDirectory: true)
+    return support.appendingPathComponent(
+        Bundle.main.object(forInfoDictionaryKey: "GooglePiggyStateDirectory") as? String ?? stateDirectoryName,
+        isDirectory: true
+    )
 }
 
 func defaultStatusURL() -> URL {
-    defaultStateDirectory().appendingPathComponent("codex-status.json")
+    hookActorID.isEmpty ? defaultStateDirectory().appendingPathComponent("codex-status.json") : actorStatusURL(hookActorID)
 }
 
 func heartbeatURL() -> URL {
@@ -139,7 +142,11 @@ func writeBridgeState(
     if !permissionRequestID.isEmpty {
         state["permission_request_id"] = permissionRequestID
     }
+    for (key, value) in hookMetadata { state[key] = value }
+    state["received_at"] = Date().timeIntervalSince1970
     try writeJSONAtomic(state, to: statusURL)
+    let filename = String(format: "%020.6f", Date().timeIntervalSince1970) + "-" + UUID().uuidString + ".json"
+    try writeJSONAtomic(state, to: familyEventDirectory().appendingPathComponent(filename))
 
     var log: [String: Any] = [
         "updated_at": updatedAt,
@@ -304,6 +311,12 @@ func updateCodexHooks(install: Bool, executableURL: URL = currentExecutableURL()
             ("PreToolUse", 10),
             ("PostToolUse", 10),
             ("Stop", 10),
+            ("Interrupt", 3),
+            ("PreCompact", 10),
+            ("PostCompact", 10),
+            ("SubagentStart", 10),
+            ("SubagentStop", 10),
+            ("SessionEnd", 10),
             ("PermissionRequest", 600),
         ]
         let command = hookCommand(executableURL: executableURL)

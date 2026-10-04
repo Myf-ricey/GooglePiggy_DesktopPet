@@ -8,7 +8,7 @@ APP_NAME="GooglePiggy.app"
 APP_DIR="$BUILD_ROOT/$APP_NAME"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 EXECUTABLE_DIR="$APP_DIR/Contents/MacOS"
-VERSION="${VERSION:-0.3.2}"
+VERSION="${VERSION:-0.4.0}"
 MACHINE_ARCH="$(uname -m)"
 BUILD_UNIVERSAL="${BUILD_UNIVERSAL:-1}"
 
@@ -61,11 +61,9 @@ export CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR"
 export SWIFT_MODULE_CACHE_PATH="$MODULE_CACHE_DIR"
 
 cd "$PROJECT_DIR"
-"$BUILD_PYTHON" tools/prepare_effect_assets.py
-"$BUILD_PYTHON" tools/export_macos_assets.py --output "$RESOURCES_DIR"
+# Approved native frames are versioned so a clean checkout reproduces the release.
+/usr/bin/ditto assets/macos-resources "$RESOURCES_DIR"
 "$BUILD_PYTHON" tools/smoke_test.py
-mkdir -p "$RESOURCES_DIR/effects"
-/usr/bin/ditto assets/effects "$RESOURCES_DIR/effects"
 
 /usr/bin/ditto macos/Info.plist "$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy \
@@ -123,16 +121,13 @@ mkdir -p "$RELEASE_DIR"
 /usr/bin/ditto README-MAC.md "$RELEASE_DIR/README-MAC.md"
 chmod 755 "$RELEASE_DIR/install.command" "$RELEASE_DIR/uninstall.command"
 
-/usr/bin/ditto \
-    -c \
-    -k \
-    --norsrc \
-    --noextattr \
-    --noqtn \
-    --noacl \
-    --keepParent \
-    "$RELEASE_DIR" \
-    "$ZIP_PATH"
+KEKA_CLI="${KEKA_CLI:-/Applications/Keka.app/Contents/MacOS/Keka}"
+if [[ ! -x "$KEKA_CLI" ]]; then
+    print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
+    exit 1
+fi
+(cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip "$ZIP_PATH" "$RELEASE_NAME")
+"$KEKA_CLI" --cli 7zz t "$ZIP_PATH"
 
 if [[ "${BUILD_DMG:-1}" == "1" ]]; then
     /usr/bin/hdiutil create \

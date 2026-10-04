@@ -48,7 +48,11 @@ for _ in {1..20}; do
     fi
     sleep 0.05
 done
-rm -rf "$DEST_APP"
+if [[ -d "$DEST_APP" ]]; then
+    BACKUP_DIR="$INSTALL_DIR/GooglePiggy Backups/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    mv "$DEST_APP" "$BACKUP_DIR/GooglePiggy.app"
+fi
 /usr/bin/ditto "$SOURCE_APP" "$DEST_APP"
 
 EXECUTABLE="$DEST_APP/Contents/MacOS/GooglePiggy"

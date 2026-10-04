@@ -40,9 +40,6 @@ func canEnterEdgeHide(
     hasTransientAnimation: Bool
 ) -> Bool {
     mode == "responsive"
-        && bridgeStatus == "idle"
-        && !hasPermissionRequest
-        && !hasTransientAnimation
 }
 
 // Windows port contract: all helpers below use screen coordinates with +Y
@@ -237,4 +234,29 @@ func tailWindowFrame(
             height: size
         )
     }
+}
+
+/// Tail rectangles in screen coordinates. Only slide along the contacted edge;
+/// never clamp the outward overlap back onto the display.
+func familyTailRects(edge: DesktopEdge, main: NSRect, desktop: NSRect, children: Int) -> [NSRect] {
+    var rects = [main]
+    let small: CGFloat = 32
+    let overlap = EdgeHidePolicy.tailScreenOverlap * small / EdgeHidePolicy.tailWindowSize
+    for i in 0..<min(3,children) {
+        switch edge {
+        case .bottom, .top:
+            rects.append(NSRect(x:main.maxX+4+CGFloat(i)*(small+4),
+                y:edge == .bottom ? desktop.minY-overlap : desktop.maxY-small+overlap,
+                width:small,height:small))
+        case .left, .right:
+            rects.append(NSRect(x:edge == .left ? desktop.minX-overlap : desktop.maxX-small+overlap,
+                y:main.minY-4-CGFloat(i+1)*(small+4),width:small,height:small))
+        }
+    }
+    let union = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+    let horizontal = edge == .bottom || edge == .top
+    let shift = horizontal
+        ? containmentShift(itemMin:union.minX,itemMax:union.maxX,containerMin:desktop.minX,containerMax:desktop.maxX,clearance:4)
+        : containmentShift(itemMin:union.minY,itemMax:union.maxY,containerMin:desktop.minY,containerMax:desktop.maxY,clearance:4)
+    return rects.map { $0.offsetBy(dx:horizontal ? shift : 0,dy:horizontal ? 0 : shift) }
 }

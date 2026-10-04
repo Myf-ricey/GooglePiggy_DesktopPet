@@ -8,8 +8,8 @@ private let permissionStaleInterval: TimeInterval = 620
 private let heartbeatInterval: TimeInterval = 1
 private let successEffectDuration: TimeInterval = 1.35
 private let dragThreshold: CGFloat = 4
-private let permissionBodyWidth: CGFloat = 260
-private let permissionBodyHeight: CGFloat = 150
+private let permissionBodyWidth: CGFloat = 280
+private let permissionBodyHeight: CGFloat = 230
 private enum EdgeTransition: Equatable {
     case hiding
     case revealing
@@ -32,7 +32,7 @@ private struct EdgePlacement {
 private func permissionBodyText(_ detail: String) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byCharWrapping
-    paragraph.maximumLineHeight = 20
+    paragraph.lineSpacing = 3
     let attributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 14),
         .foregroundColor: NSColor(
@@ -63,6 +63,7 @@ private struct AnimationRecord: Decodable {
     let label: String
     let source: String
     let frames: [FrameRecord]
+    let loop_start: Int?
 }
 
 private struct AnimationManifest: Decodable {
@@ -205,14 +206,30 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var isQuitting = false
     private let startupEdgePreview: DesktopEdge?
 
+    private var leisure = LeisureRoutine()
+    private var leisureTaskTurns: [String: String] = [:]
+    private var leisureTasksInitialized = false
+    private var sleepPreviewEpoch: TimeInterval = 0
+    private let leisureLayerKeys: Set<String> = ["sleep_body", "sleep_z", "sleep_tail"]
     private var mode = "responsive"
     private var frameIndex = 0
     private var transientKey: String?
     private var transientOnce = false
     private var successEffectStarted: TimeInterval?
 
+    private let threadAnimations = ThreadAnimationClock()
+    private let families = FamilyStore()
+    private let familySelector = FamilySelector()
+    private var familyTimer: Timer?
+    private var familyPollAt: TimeInterval = 0
+    private var familyHoverUntil: TimeInterval = 0
+    private var childPositions: [String: NSPoint] = [:]
+    private var focusedChildID = ""
+    private var selectedFamilyPayload: [String: Any]?
     private var bridgeToken = ""
     private var bridgeStatus = "idle"
+    private var packingKey = "packing_01"
+    private var packingCycle = 0
     private var lastStatusPoll: TimeInterval = 0
     private var lastHeartbeat: TimeInterval = 0
 
@@ -223,11 +240,16 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     private var mouseDown = false
     private var dragging = false
+    private var nudgeFacesRight = false
+    private var nudgeLastCursor: NSPoint?
     private var dragStartCursor: NSPoint?
     private var dragStartWindowOrigin: NSPoint?
     private var dragPrevious: VisualSnapshot?
     private var dragCanPlayFlat = false
 
+    private var hiddenWorkTokens = Set<String>()
+    private var familyRevealStarted: TimeInterval?
+    private var dragAnimationStarted: TimeInterval = 0
     private var edgePlacement: EdgePlacement?
     private var edgeTransition: EdgeTransition?
     private var revealAfterHiding = false
@@ -241,9 +263,61 @@ final class PetController: NSObject, NSApplicationDelegate {
             return transientKey
         }
         if mode == "responsive" {
-            return bridgeStatus == "thinking" ? "carrot" : "idle"
+            if let position = threadAnimationPosition { return position.key }
+            switch bridgeStatus {
+            case "thinking": return manifest?.animations["reading"] != nil ? "reading" : "carrot"
+            case "working": return "carrot"
+            case "compacting": return packingKey
+            case "interrupted": return "question"
+            default:
+                switch leisure.phase {
+                case .entering: return "sleep_entry"
+                case .sleeping: return "sleep_body"
+                case .snacking: return "snack"
+                case .waking: return "left"
+                case .awake: return "idle"
+                }
+            }
         }
-        return mode
+        if mode == "sleep_entry" {
+            return leisureNow - sleepPreviewEpoch < sleepEntryDuration ? "sleep_entry" : "sleep_body"
+        }
+        return mode == "packing_random" ? packingKey : mode
+    }
+
+    private var selectedAnimationActor: String {
+        if let node = families.nodes[focusedChildID], node.status == "permission" { return node.id }
+        return families.selectedID
+    }
+
+    private var threadAnimationPosition: ThreadAnimationClock.Position? {
+        guard mode == "responsive", transientKey == nil, permissionRequest == nil,
+              let position = threadAnimations.position(id:selectedAnimationActor,now:leisureNow) else { return nil }
+        // Physical interactions / leisure remain their own higher-priority track.
+        if position.key == "idle", leisure.phase != .awake { return nil }
+        return position
+    }
+
+    private func syncThreadAnimations() {
+        let now=leisureNow
+        for node in families.nodes.values {
+            let state: String
+            if !node.active, families.children(node.id).contains(where: { $0.active && !families.childIsPaused($0) }) {
+                state="carrot"
+            } else {
+                switch node.status {
+                case "thinking": state=manifest?.animations["reading"] != nil ? "reading" : "carrot"
+                case "working": state="carrot"
+                case "compacting": state="packing"
+                case "interrupted", "permission", "error": state="question"
+                case "success": state="jump"
+                default: state="idle"
+                }
+            }
+            threadAnimations.observe(id:node.id,turn:node.turn,state:state,now:now,
+                                     age:max(0,Date().timeIntervalSince(node.changed)))
+        }
+        threadAnimations.retain(ids:Set(families.nodes.keys))
     }
 
     private var currentAnimation: AnimationRecord? {
@@ -251,30 +325,53 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private var canHideAtDesktopEdge: Bool {
-        canEnterEdgeHide(
-            mode: mode,
-            bridgeStatus: bridgeStatus,
-            hasPermissionRequest: permissionRequest != nil,
-            hasTransientAnimation: transientKey != nil
-        )
-            && edgePlacement == nil
-            && edgeTransition == nil
+        canEnterEdgeHide(mode: mode, bridgeStatus: bridgeStatus, hasPermissionRequest: permissionRequest != nil, hasTransientAnimation: transientKey != nil) && edgePlacement == nil && edgeTransition == nil
+    }
+
+    private var currentWorkTokens: Set<String> {
+        let nodes = [families.selected].compactMap { $0 } + families.children(families.selectedID)
+        let working = nodes.filter { ["thinking", "working", "compacting", "permission"].contains($0.status) }
+        if !nodes.isEmpty { return Set(working.map { $0.id + ":" + $0.turn }) }
+        return ["thinking", "working", "compacting", "permission"].contains(bridgeStatus) ? ["bridge"] : []
+    }
+
+    private func familyBodyBounds() -> NSRect {
+        var result = currentPetLocalBounds()
+        let slots = [NSPoint(x:310,y:575), NSPoint(x:410,y:615), NSPoint(x:510,y:575)]
+        for (i,node) in families.children(families.selectedID).prefix(3).enumerated() {
+            let point = childPositions[node.id] ?? slots[i]
+            result = result.union(NSRect(x:point.x-44,y:point.y-64,width:88,height:70))
+        }
+        return result
+    }
+
+    private func revealContentBounds() -> NSRect {
+        // Reserve all three child slots, even if a new agent arrives after the reveal.
+        currentContentLocalBounds().union(NSRect(x:258,y:400,width:310,height:230))
     }
 
     private var activityRequiresVisiblePet: Bool {
-        bridgeStatus == "thinking"
+        ["thinking", "working", "compacting", "interrupted"].contains(bridgeStatus)
             || permissionRequest != nil
             || successEffectStarted != nil
     }
 
+    private var permissionTextHeight: CGFloat {
+        let summary = permissionRequest?["summary"] as? String ?? "Codex 正在请求权限"
+        return min(permissionBodyHeight, max(22, ceil(permissionBodyMeasuredHeight(summary)) + 2))
+    }
+
     private var permissionBubbleRect: NSRect {
-        NSRect(x: 262, y: 84, width: 296, height: 264)
+        let height = 104 + permissionTextHeight
+        // Keep the pointer anchored above the pig as the text grows upwards.
+        return NSRect(x: 250, y: 348 - height, width: 320, height: height)
     }
 
     private var permissionButtons: [String: NSRect] {
-        [
-            "allow": NSRect(x: 300, y: 300, width: 92, height: 32),
-            "deny": NSRect(x: 428, y: 300, width: 92, height: 32),
+        let rect = permissionBubbleRect
+        return [
+            "deny": NSRect(x: rect.minX + 20, y: rect.maxY - 48, width: 100, height: 32),
+            "allow": NSRect(x: rect.maxX - 136, y: rect.maxY - 48, width: 116, height: 32),
         ]
     }
 
@@ -291,13 +388,37 @@ final class PetController: NSObject, NSApplicationDelegate {
         }
         do {
             try loadResources()
+            restartLeisureClock()
             createWindow()
+            familySelector.onSelect = { [weak self] id in
+                guard let self else { return }
+                if let node = self.families.nodes[id], node.unread && !node.active {
+                    guard let url = URL(string:"codex://threads/\(id)?hostId=local"), NSWorkspace.shared.open(url) else { return }
+                    // Remove only after Codex confirms its actual read state.
+                    self.familySelector.panel.orderOut(nil)
+                    return
+                }
+                self.families.select(id); self.focusedChildID = ""
+                self.bridgeToken = ""; self.transientKey = nil
+                self.refreshFamilyState(force: true)
+            }
+            let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
+                if let self, !self.mouseDown {
+                    if self.currentKey == "left", self.leisure.phase != .waking { self.updateNudgeDirection(NSEvent.mouseLocation) }
+                    else { self.nudgeLastCursor = NSEvent.mouseLocation }
+                }
+                self?.refreshFamilyState()
+                self?.updateLeisure()
+                self?.renderCurrent()
+            }
+            RunLoop.main.add(timer, forMode: .common); familyTimer = timer
             applyBridgePayload(readJSONDictionary(defaultStatusURL()) ?? [:])
             writeHeartbeat(force: true)
             renderCurrent()
             scheduleCurrent()
             if let edge = startupEdgePreview {
                 DispatchQueue.main.async { [weak self] in
+                    self?.refreshFamilyState(force: true)
                     self?.previewEdgeHide(edge)
                 }
             }
@@ -326,10 +447,13 @@ final class PetController: NSObject, NSApplicationDelegate {
         )
         let data = try Data(contentsOf: manifestURL)
         let decoded = try JSONDecoder().decode(AnimationManifest.self, from: data)
+        threadAnimations.clips = decoded.animations.mapValues {
+            ThreadAnimationClock.Clip(durations:$0.frames.map { Double($0.duration_ms)/1000 }, loopStart:$0.loop_start ?? 0)
+        }
         guard
             decoded.format_version == 1,
             decoded.window_size == Int(windowSize),
-            Set(decoded.animations.keys)
+            Set(decoded.animations.keys).filter({ !$0.hasPrefix("packing_") }).subtracting(["reading", "sleep_entry", "sleep_body", "sleep_z", "sleep_tail", "snack"])
                 == Set([
                     "idle", "left", "carrot", "jump", "flat", "question",
                     "edge_reveal",
@@ -470,6 +594,19 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func currentFrameRecord() -> FrameRecord? {
+        if let position = threadAnimationPosition,
+           let animation = manifest?.animations[position.key], animation.frames.indices.contains(position.index) {
+            frameIndex = position.index
+            return animation.frames[position.index]
+        }
+        if mode == "sleep_entry" {
+            let elapsed = leisureNow - sleepPreviewEpoch
+            return leisureLayer(currentKey, elapsed: currentKey == "sleep_entry" ? elapsed : elapsed - sleepEntryDuration,
+                                loop: currentKey != "sleep_entry")
+        }
+        if mode == "responsive", leisure.phase == .sleeping, currentKey == "sleep_body" {
+            return leisureLayer("sleep_body", elapsed: leisureNow - leisure.sleepEpoch)
+        }
         guard let animation = currentAnimation, !animation.frames.isEmpty else {
             return nil
         }
@@ -490,7 +627,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             return NSRect(x: 300, y: 375, width: 200, height: 210)
         }
         return NSRect(
-            x: CGFloat(values[0]),
+            x: CGFloat(currentKey == "left" && nudgeFacesRight ? 820 - values[2] : values[0]),
             y: CGFloat(values[1]),
             width: CGFloat(values[2] - values[0]),
             height: CGFloat(values[3] - values[1])
@@ -509,6 +646,9 @@ final class PetController: NSObject, NSApplicationDelegate {
                 height: permissionBubbleRect.height + 25
             )
             result = result.union(bubbleWithPointer)
+        }
+        if !families.children(families.selectedID).isEmpty {
+            result = result.union(NSRect(x: 260, y: 500, width: 305, height: 120))
         }
         return result
     }
@@ -538,7 +678,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     private func settleRevealedWindow(for placement: EdgePlacement) {
         guard
             let window,
-            let contentFrame = screenBounds(for: currentContentLocalBounds())
+            let contentFrame = screenBounds(for: revealContentBounds())
         else {
             return
         }
@@ -546,7 +686,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             edge: placement.edge,
             contentFrame: contentFrame,
             desktopFrame: placement.revealFrame,
-            bottomDrop: bottomRevealDrop(for: placement.edge)
+            bottomDrop: 0
         )
         guard abs(correction.x) >= 0.5 || abs(correction.y) >= 0.5 else {
             return
@@ -692,7 +832,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         guard
             canHideAtDesktopEdge,
             let window,
-            let petFrame = screenBounds(for: currentPetLocalBounds()),
+            let petFrame = screenBounds(for: familyBodyBounds()),
             let screen = forcedScreen ?? interactionScreen()
         else {
             return false
@@ -719,13 +859,14 @@ final class PetController: NSObject, NSApplicationDelegate {
                 desktopFrame: edgeFrame
             )
         )
+        hiddenWorkTokens = currentWorkTokens
         edgePlacement = placement
         edgeTransition = .hiding
         revealAfterHiding = false
         successEffectStarted = nil
         switchVisual("edge_reveal", once: true)
 
-        guard let movingPetFrame = screenBounds(for: currentPetLocalBounds()) else {
+        guard let movingPetFrame = screenBounds(for: familyBodyBounds()) else {
             edgePlacement = nil
             edgeTransition = nil
             return false
@@ -748,13 +889,13 @@ final class PetController: NSObject, NSApplicationDelegate {
                 return
             }
             self.edgeTransition = nil
-            if self.revealAfterHiding || self.activityRequiresVisiblePet {
+            if self.revealAfterHiding {
                 self.revealAfterHiding = false
                 _ = self.beginEdgeReveal(playRevealAnimation: false)
                 return
             }
             self.window?.orderOut(nil)
-            self.tailWindow?.setFrame(placement.tailFrame, display: true)
+            self.updateFamilyTailFrame()
             self.tailView?.needsDisplay = true
             self.tailWindow?.orderFrontRegardless()
             self.writeHeartbeat(force: true)
@@ -817,6 +958,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             return false
         }
 
+        familyRevealStarted = ProcessInfo.processInfo.systemUptime
         edgeTransition = .revealing
         revealAfterHiding = false
         tailWindow?.orderOut(nil)
@@ -825,7 +967,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             switchVisual("edge_reveal", once: true)
         }
         window.orderFrontRegardless()
-        guard let contentFrame = screenBounds(for: currentContentLocalBounds()) else {
+        guard let contentFrame = screenBounds(for: revealContentBounds()) else {
             edgePlacement = nil
             edgeTransition = nil
             return false
@@ -834,7 +976,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             edge: placement.edge,
             contentFrame: contentFrame,
             desktopFrame: placement.revealFrame,
-            bottomDrop: bottomRevealDrop(for: placement.edge)
+            bottomDrop: 0
         )
         let target = NSPoint(
             x: window.frame.origin.x + delta.x,
@@ -862,10 +1004,105 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     @discardableResult
     private func revealForActivityIfNeeded() -> Bool {
-        guard edgePlacement != nil, activityRequiresVisiblePet else {
-            return false
+        guard edgePlacement != nil else { return false }
+        let current = currentWorkTokens
+        let started = !current.subtracting(hiddenWorkTokens).isEmpty
+        hiddenWorkTokens = current
+        guard started else { return false }
+        return beginEdgeReveal(playRevealAnimation: true)
+    }
+
+    private var sleepEntryDuration: TimeInterval {
+        Double(manifest?.animations["sleep_entry"]?.frames.reduce(0) { $0 + $1.duration_ms } ?? 6440) / 1000
+    }
+
+    private var leisureNow: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    private var leisureBlocked: Bool {
+        permissionRequest != nil || dragging || edgePlacement != nil || edgeTransition != nil
+            || transientKey != nil || activityRequiresVisiblePet
+            || families.nodes.values.contains { $0.active && ["thinking", "working", "compacting", "permission"].contains($0.status) }
+    }
+
+    private func restartLeisureClock() {
+        leisure.reset(now: leisureNow, interval: LeisureRoutine.interval { Double.random(in: 0..<1) },
+                      choice: Double.random(in: 0..<1))
+    }
+
+    private func interruptLeisure(preserveDeadline: Bool = false) {
+        guard leisure.phase != .awake else { return }
+        if preserveDeadline || leisure.phase == .snacking { leisure.cancel() }
+        else { restartLeisureClock() }
+        frameIndex = 0
+    }
+
+    private func observeNewTasks() {
+        var added = false
+        for node in families.nodes.values {
+            if leisureTasksInitialized,
+               leisureTaskTurns[node.id] != node.turn,
+               (!node.turn.isEmpty || node.active) { added = true }
+            leisureTaskTurns[node.id] = node.turn
         }
-        return beginEdgeReveal(playRevealAnimation: false)
+        leisureTasksInitialized = true
+        if added {
+            let previous = currentKey
+            restartLeisureClock()
+            if previous != currentKey { frameIndex = 0; scheduleCurrent() }
+        }
+    }
+
+    private func updateLeisure() {
+        guard mode == "responsive" else { return }
+        if transientKey == nil, successEffectStarted != nil, threadAnimationPosition?.key != "jump" {
+            successEffectStarted = nil
+        }
+        if leisureBlocked && leisure.phase != .awake {
+            interruptLeisure(); scheduleCurrent()
+        }
+        switch leisure.tick(now: leisureNow, eligible: !leisureBlocked && !mouseDown) {
+        case .eat, .sleep: frameIndex = 0; renderCurrent(); scheduleCurrent()
+        case .none: break
+        }
+    }
+
+    private func startRest() {
+        // Functional rest remains in responsive mode; it never suppresses Codex.
+        guard !leisureBlocked else { return }
+        mode = "responsive"; leisure.enter(); frameIndex = 0
+        renderCurrent(); scheduleCurrent(); writeHeartbeat(force: true)
+    }
+
+    private func sleepClick() {
+        let was = leisure.phase
+        leisure.click(now: leisureNow, wake: Bool.random())
+        if leisure.phase == .waking && was != .waking {
+            nudgeFacesRight = false; frameIndex = 0; scheduleCurrent()
+        }
+        renderCurrent(); writeHeartbeat(force: true)
+    }
+
+    private func leisureLayer(_ key: String, elapsed: TimeInterval, loop: Bool = true) -> FrameRecord? {
+        guard let animation = manifest?.animations[key], !animation.frames.isEmpty else { return nil }
+        let duration = Double(animation.frames.reduce(0) { $0 + $1.duration_ms }) / 1000
+        var remaining = loop ? max(0, elapsed).truncatingRemainder(dividingBy: duration) : min(max(0, elapsed), max(0,duration-0.001))
+        for frame in animation.frames {
+            remaining -= Double(frame.duration_ms) / 1000
+            if remaining < 0 { return frame }
+        }
+        return animation.frames.last
+    }
+
+    private func drawSleepLayers(in bounds: NSRect) {
+        let elapsed = mode == "sleep_entry" ? leisureNow - sleepPreviewEpoch - sleepEntryDuration : leisureNow - leisure.sleepEpoch
+        let tailAge = mode == "responsive" ? leisure.tailEpoch.map { leisureNow - $0 } : nil
+        let age = tailAge.flatMap { $0 < 1.44 ? $0 : nil } ?? 0
+        for record in [leisureLayer("sleep_tail", elapsed: age, loop: false),
+                       leisureLayer("sleep_z", elapsed: elapsed)].compactMap({ $0 }) {
+            imageStore?.image(relativePath: record.file)?.draw(in: bounds, from: .zero,
+                operation: .sourceOver, fraction: 1, respectFlipped: true,
+                hints: [.interpolation: NSImageInterpolation.none])
+        }
     }
 
     private func renderCurrent() {
@@ -889,6 +1126,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func switchVisual(_ key: String?, once: Bool = false) {
+        if key != nil { interruptLeisure() }
         transientKey = key
         transientOnce = once
         frameIndex = 0
@@ -904,9 +1142,37 @@ final class PetController: NSObject, NSApplicationDelegate {
         guard let animation = currentAnimation else {
             return
         }
+        if threadAnimationPosition != nil {
+            _ = currentFrameRecord();renderCurrent();scheduleCurrent();return
+        }
         frameIndex += 1
+        if frameIndex >= animation.frames.count, mode == "responsive", transientKey == nil {
+            switch leisure.phase {
+            case .entering: leisure.settled(now: leisureNow); frameIndex = 0
+            case .snacking: leisure.finishSnack(); frameIndex = 0
+            case .waking:
+                if leisure.finishedWakeLoop() { restartLeisureClock() }
+                frameIndex = 0
+            default: break
+            }
+        }
         if frameIndex >= animation.frames.count {
-            frameIndex = 0
+            // The preview is isolated from functional sleep interactions.
+            if mode == "sleep_entry" { frameIndex = animation.frames.count - 1 }
+            // Polling continues on the held frame so a new prompt wakes it.
+            else if mode == "responsive", transientKey == nil,
+                permissionRequest == nil, bridgeStatus == "interrupted" {
+                frameIndex = animation.frames.count - 1
+            } else if (mode == "packing_random" || (mode == "responsive" && bridgeStatus == "compacting")), transientKey == nil {
+                selectPackingAnimation()
+                frameIndex = 0
+            } else if currentKey == "reading", mode == "responsive" {
+                // Repeat only the settled reading section, without picking
+                // the book up again or jumping through the idle pose.
+                frameIndex = animation.loop_start ?? 0
+            } else {
+                frameIndex = 0
+            }
             if transientKey != nil, transientOnce {
                 transientKey = nil
                 transientOnce = false
@@ -918,6 +1184,9 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func statusAge() -> TimeInterval {
+        if let time = selectedFamilyPayload?["received_at"] as? Double {
+            return max(0, Date().timeIntervalSince1970-time)
+        }
         guard
             let attributes = try? FileManager.default.attributesOfItem(
                 atPath: defaultStatusURL().path
@@ -929,10 +1198,19 @@ final class PetController: NSObject, NSApplicationDelegate {
         return max(0, Date().timeIntervalSince(modified))
     }
 
+    private func selectPackingAnimation() {
+        let keys = (manifest?.animations.keys.map { $0 } ?? [])
+            .filter { $0.hasPrefix("packing_") }
+        packingKey = keys.randomElement() ?? "carrot"
+        packingCycle += 1
+    }
+
     private func setBridgeStatus(_ status: String) -> Bool {
         let previousKey = currentKey
-        bridgeStatus = status == "thinking" ? "thinking" : "idle"
-        if bridgeStatus == "thinking", transientKey == "jump" {
+        if ["thinking", "working", "compacting", "interrupted"].contains(status) { interruptLeisure() }
+        if status == "compacting", bridgeStatus != "compacting" { selectPackingAnimation() }
+        bridgeStatus = ["thinking", "working", "compacting", "interrupted"].contains(status) ? status : "idle"
+        if ["thinking", "working", "compacting", "interrupted"].contains(bridgeStatus), transientKey != nil {
             transientKey = nil
             transientOnce = false
             successEffectStarted = nil
@@ -988,6 +1266,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             return clearPermissionRequest()
         }
         let previousKey = currentKey
+        interruptLeisure()
         permissionRequest = request
         permissionRequestID = requestID
         bridgeStatus = "idle"
@@ -1026,23 +1305,37 @@ final class PetController: NSObject, NSApplicationDelegate {
             if permissionRequest != nil {
                 return clearPermissionRequest()
             }
-            if bridgeStatus == "thinking", status == "thinking",
-                statusAge() > thinkingStaleInterval
+            if ["thinking", "working"].contains(bridgeStatus), ["thinking", "working"].contains(status),
+                selectedFamilyPayload == nil, statusAge() > thinkingStaleInterval
             {
                 return setBridgeStatus("idle")
             }
             return false
         }
+        if families.nodes.isEmpty, ["thinking", "working"].contains(status),
+           !["thinking", "working", "compacting"].contains(bridgeStatus) { restartLeisureClock() }
         bridgeToken = token
         _ = clearPermissionRequest()
+        if status == "success", statusAge() > 3 { return setBridgeStatus("idle") }
+        if status == "success", mode != "responsive" { return setBridgeStatus("idle") }
+        if status == "success", families.nodes[selectedAnimationActor] != nil {
+            bridgeStatus = "idle";transientKey = nil;transientOnce = false
+            if let position = threadAnimationPosition, position.key == "jump" {
+                successEffectStarted = leisureNow - position.elapsed
+            } else { successEffectStarted = nil }
+            renderCurrent();scheduleCurrent();return true
+        }
         if status == "success" {
             bridgeStatus = "idle"
             successEffectStarted = ProcessInfo.processInfo.systemUptime
             switchVisual("jump", once: true)
             return true
         }
-        if status == "thinking", statusAge() <= thinkingStaleInterval {
-            return setBridgeStatus("thinking")
+        if ["interrupted", "compacting"].contains(status) {
+            return setBridgeStatus(status)
+        }
+        if ["thinking", "working"].contains(status), selectedFamilyPayload != nil || statusAge() <= thinkingStaleInterval {
+            return setBridgeStatus(status)
         }
         return setBridgeStatus("idle")
     }
@@ -1057,7 +1350,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         }
         lastStatusPoll = now
         let visualChanged = applyBridgePayload(
-            readJSONDictionary(defaultStatusURL()) ?? [:]
+            selectedFamilyPayload ?? readJSONDictionary(defaultStatusURL()) ?? [:]
         )
         let startedReveal = revealForActivityIfNeeded()
         return visualChanged || startedReveal
@@ -1069,12 +1362,31 @@ final class PetController: NSObject, NSApplicationDelegate {
             return
         }
         lastHeartbeat = now
+        _ = currentFrameRecord()
         var heartbeat: [String: Any] = [
             "app": appDisplayName,
             "pid": ProcessInfo.processInfo.processIdentifier,
             "updated_at": utcTimestamp(),
             "status_path": defaultStatusURL().path,
             "current_key": currentKey,
+            "frame_index": frameIndex,
+            "packing_cycle": packingCycle,
+            "bridge_status": bridgeStatus,
+            "nudge_facing": nudgeFacesRight ? "right" : "left",
+            "family_tail_count": 1 + min(3, families.children(families.selectedID).count),
+            "paused_children": families.children(families.selectedID).filter { families.childIsPaused($0) }.map { $0.id },
+            "unread_families": families.roots.filter { $0.unread }.map { $0.id },
+            "hidden_work_tokens": Array(hiddenWorkTokens).sorted(),
+            "selected_family": families.selectedID,
+            "families": families.roots.map { $0.id },
+            "children": families.children(families.selectedID).map { $0.id },
+            "leisure_phase": leisure.phase.rawValue,
+            "sleep_in_seconds": max(0, leisure.deadline - now),
+            "snack_in_seconds": leisure.snackTimes.map { max(0,$0-now) },
+            "sleep_elapsed": leisure.phase == .sleeping ? now-leisure.sleepEpoch : 0,
+            "tail_elapsed": leisure.tailEpoch.map { now-$0 } ?? -1,
+            "wake_loops": leisure.wakeLoops,
+            "mode": mode,
             "platform": "macOS",
         ]
         if let window {
@@ -1109,6 +1421,13 @@ final class PetController: NSObject, NSApplicationDelegate {
         else {
             return
         }
+        NSGraphicsContext.saveGraphicsState()
+        if currentKey == "left", nudgeFacesRight {
+            let transform = NSAffineTransform()
+            transform.translateX(by: 820, yBy: 0)
+            transform.scaleX(by: -1, yBy: 1)
+            transform.concat()
+        }
         image.draw(
             in: bounds,
             from: .zero,
@@ -1117,31 +1436,138 @@ final class PetController: NSObject, NSApplicationDelegate {
             respectFlipped: true,
             hints: [.interpolation: NSImageInterpolation.none]
         )
+        NSGraphicsContext.restoreGraphicsState()
+        if currentKey == "sleep_body", mode == "responsive" || mode == "sleep_entry" { drawSleepLayers(in: bounds) }
         if currentKey == "jump", successEffectStarted != nil {
             drawSuccessEffects()
         }
+        drawFamilyChildren()
         if permissionRequest != nil {
             drawPermissionBubble()
         }
     }
 
-    func drawEdgeTail(in bounds: NSRect) {
-        guard
-            let edge = edgePlacement?.edge,
-            let image = imageStore?.image(
-                relativePath: "edge-tail/\(edge.rawValue).png"
-            )
-        else {
-            return
+    private func refreshFamilyState(force: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if force || now-familyPollAt > 0.20 {
+            familyPollAt = now
+            let previousFamily = families.selectedID
+            families.poll()
+            observeNewTasks()
+            syncThreadAnimations()
+            if families.selectedID != previousFamily {
+                focusedChildID = ""; bridgeToken = ""; transientKey = nil
+                transientOnce = false; successEffectStarted = nil; frameIndex = 0
+            }
+            let node = families.nodes[focusedChildID].flatMap { $0.status == "permission" ? $0 : nil } ?? families.selected
+            selectedFamilyPayload = node?.payload ?? [:]
+            if let node, !node.active,
+                families.children(node.id).contains(where: { $0.active && !families.childIsPaused($0) }) {
+                selectedFamilyPayload = ["status":"working", "token":"family-children-working-"+node.id,
+                    "session_id":node.id,"received_at":Date().timeIntervalSince1970]
+            }
+            if !dragging, let payload = selectedFamilyPayload { _ = applyBridgePayload(payload) }
+            _ = revealForActivityIfNeeded()
+            if edgePlacement != nil && edgeTransition == nil { updateFamilyTailFrame() }
         }
-        image.draw(
-            in: bounds,
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1,
-            respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.high]
-        )
+        let nodes = families.roots
+        familySelector.update(nodes, selected: families.selectedID,
+            counts: Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, families.children($0.id).count) }))
+        guard let window, edgePlacement == nil, edgeTransition == nil else {
+            familySelector.panel.orderOut(nil); return
+        }
+        // Position is anchored to the first idle pose, not the animated frame.
+        // Keep hover coverage separate so feet and extended poses remain usable.
+        let idle = manifest?.animations["idle"]?.frames.first?.visible_bounds ?? [334,436,486,570]
+        let anchor = NSRect(x:CGFloat(idle[0]),y:CGFloat(idle[1]),
+            width:CGFloat(idle[2]-idle[0]),height:CGFloat(idle[3]-idle[1])).insetBy(dx:-8,dy:-8)
+        let hover = currentPetLocalBounds().union(anchor).insetBy(dx:-8,dy:-8)
+        guard let anchorScreen = screenBounds(for:anchor),
+            let headScreen = screenBounds(for:hover) else { return }
+        let screen = window.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
+        let size = familySelector.panel.frame.size
+        let origin = NSPoint(x: min(max(anchorScreen.midX-size.width/2, screen.minX), screen.maxX-size.width),
+            y: min(anchorScreen.maxY+8, screen.maxY-size.height))
+        familySelector.panel.setFrameOrigin(origin)
+        let mouse = NSEvent.mouseLocation
+        let corridor = headScreen.union(familySelector.panel.frame)
+        if headScreen.contains(mouse) || (familySelector.panel.isVisible && corridor.contains(mouse)) {
+            familyHoverUntil = now+0.4; familySelector.panel.orderFrontRegardless()
+        } else if now > familyHoverUntil { familySelector.panel.orderOut(nil) }
+    }
+
+    private func drawFamilyChildren() {
+        let nodes = Array(families.children(families.selectedID).prefix(3))
+        let slots = [NSPoint(x: 310, y: 575), NSPoint(x: 410, y: 615), NSPoint(x: 510, y: 575)]
+        for (index, node) in nodes.enumerated() {
+            let target = slots[index], old = childPositions[node.id] ?? target
+            let point = NSPoint(x: old.x+(target.x-old.x)*0.14, y: old.y+(target.y-old.y)*0.14)
+            childPositions[node.id] = point
+            let key: String
+            let revealElapsed = familyRevealStarted.map { ProcessInfo.processInfo.systemUptime-$0 }
+            let revealing = revealElapsed.map { $0 < 0.855 } ?? false
+            if dragging { key = "left" }
+            else if revealing { key = "edge_reveal" }
+            else if families.childIsPaused(node) { key = "idle" }
+            else if node.completion != nil { key = "jump" }
+            else if ["permission", "error"].contains(node.status) { key = "question" }
+            else { key = "carrot" }
+            guard let animation = manifest?.animations[key], !animation.frames.isEmpty else { continue }
+            let elapsed = dragging ? ProcessInfo.processInfo.systemUptime-dragAnimationStarted
+                : (revealing ? (revealElapsed ?? 0) : max(0, Date().timeIntervalSince(node.completion ?? node.changed)))
+            let duration = Double(animation.frames.reduce(0) { $0+$1.duration_ms })/1000
+            let animationElapsed = key == "carrot" ? elapsed * 1.25 : elapsed
+            var time = (node.completion != nil || key == "question") ? min(animationElapsed, max(0,duration-0.001)) : animationElapsed.truncatingRemainder(dividingBy: duration)
+            var frame = animation.frames.last!
+            for f in animation.frames { if time < Double(f.duration_ms)/1000 { frame = f; break }; time -= Double(f.duration_ms)/1000 }
+            let opacity = (dragging || revealing || node.completion == nil) ? 1 : min(1, max(0, (duration+0.4-elapsed)/0.4))
+            let scale: CGFloat = 0.48
+            NSGraphicsContext.saveGraphicsState()
+            let squeeze = NSAffineTransform()
+            squeeze.translateX(by:point.x,yBy:0); squeeze.scaleX(by:0.85,yBy:1); squeeze.translateX(by:-point.x,yBy:0); squeeze.concat()
+            if dragging && Int(elapsed / max(0.02,duration)) % 2 == 1 {
+                let mirror = NSAffineTransform(); mirror.translateX(by: point.x*2, yBy: 0)
+                mirror.scaleX(by: -1, yBy: 1); mirror.concat()
+            }
+            imageStore?.image(relativePath: frame.file)?.draw(
+                in: NSRect(x: point.x-410*scale, y: point.y-570*scale, width: 640*scale, height: 640*scale),
+                from: .zero, operation: .sourceOver, fraction: opacity, respectFlipped: true,
+                hints: [.interpolation: NSImageInterpolation.high])
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        let extra = families.children(families.selectedID).count-3
+        if extra > 0 { ("+\(extra)" as NSString).draw(at: NSPoint(x: 548, y: 565), withAttributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.gray]) }
+    }
+
+    private func currentFamilyTailRects() -> [NSRect] {
+        guard let p = edgePlacement else { return [] }
+        return familyTailRects(edge:p.edge,main:p.tailFrame,desktop:p.edgeFrame,
+            children:families.children(families.selectedID).count)
+    }
+
+    private func updateFamilyTailFrame() {
+        let rects = currentFamilyTailRects()
+        guard let first = rects.first else { return }
+        let frame = rects.dropFirst().reduce(first) { $0.union($1) }
+        tailWindow?.setFrame(frame, display:true)
+        tailView?.frame = NSRect(origin:.zero,size:frame.size)
+        tailView?.needsDisplay = true
+    }
+
+    func drawEdgeTail(in bounds: NSRect) {
+        guard let p = edgePlacement, let panel = tailWindow,
+            let image = imageStore?.image(relativePath:"edge-tail/\(p.edge.rawValue).png") else { return }
+        // Explicit clipping also keeps off-screen snapshot/render paths faithful.
+        let visible = panel.frame.intersection(p.edgeFrame)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect:NSRect(x:visible.minX-panel.frame.minX,y:panel.frame.maxY-visible.maxY,
+            width:visible.width,height:visible.height)).addClip()
+        for rect in currentFamilyTailRects() {
+            image.draw(in:NSRect(x:rect.minX-panel.frame.minX,y:panel.frame.maxY-rect.maxY,
+                width:rect.width,height:rect.height),from:.zero,operation:.sourceOver,
+                fraction:1,respectFlipped:true,hints:[.interpolation:NSImageInterpolation.high])
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     func handleTailClick() {
@@ -1225,141 +1651,90 @@ final class PetController: NSObject, NSApplicationDelegate {
             return
         }
         let rect = permissionBubbleRect
-        let shadowRect = rect.offsetBy(dx: 3, dy: 4)
-        NSColor(calibratedWhite: 0, alpha: 0.32).setFill()
-        NSBezierPath(roundedRect: shadowRect, xRadius: 18, yRadius: 18).fill()
-
-        let pointerShadow = NSBezierPath()
-        pointerShadow.move(to: NSPoint(x: 398, y: rect.maxY + 1))
-        pointerShadow.line(to: NSPoint(x: 426, y: rect.maxY + 1))
-        pointerShadow.line(to: NSPoint(x: 412, y: rect.maxY + 25))
-        pointerShadow.close()
-        NSColor(calibratedWhite: 0, alpha: 0.24).setFill()
-        pointerShadow.fill()
-
-        let fill = NSColor(
-            calibratedRed: 1,
-            green: 250 / 255,
-            blue: 244 / 255,
-            alpha: 0.95
-        )
+        let fill = NSColor(calibratedRed: 0.99, green: 0.975, blue: 0.955, alpha: 1)
+        let ink = NSColor(calibratedRed: 0.27, green: 0.23, blue: 0.23, alpha: 1)
+        let rose = NSColor(calibratedRed: 0.66, green: 0.39, blue: 0.43, alpha: 1)
+        // A single closed contour keeps the speech tail's border continuous.
+        let bubble = NSBezierPath()
+        let radius: CGFloat = 20
+        let control: CGFloat = radius * 0.55228475
+        bubble.move(to: NSPoint(x: rect.minX + radius, y: rect.minY))
+        bubble.line(to: NSPoint(x: rect.maxX - radius, y: rect.minY))
+        bubble.curve(to: NSPoint(x: rect.maxX, y: rect.minY + radius), controlPoint1: NSPoint(x: rect.maxX - radius + control, y: rect.minY), controlPoint2: NSPoint(x: rect.maxX, y: rect.minY + radius - control))
+        bubble.line(to: NSPoint(x: rect.maxX, y: rect.maxY - radius))
+        bubble.curve(to: NSPoint(x: rect.maxX - radius, y: rect.maxY), controlPoint1: NSPoint(x: rect.maxX, y: rect.maxY - radius + control), controlPoint2: NSPoint(x: rect.maxX - radius + control, y: rect.maxY))
+        bubble.line(to: NSPoint(x: 418, y: rect.maxY))
+        bubble.curve(to: NSPoint(x: 410, y: rect.maxY + 10), controlPoint1: NSPoint(x: 415, y: rect.maxY + 4), controlPoint2: NSPoint(x: 412, y: rect.maxY + 10))
+        bubble.curve(to: NSPoint(x: 402, y: rect.maxY), controlPoint1: NSPoint(x: 408, y: rect.maxY + 10), controlPoint2: NSPoint(x: 405, y: rect.maxY + 4))
+        bubble.line(to: NSPoint(x: rect.minX + radius, y: rect.maxY))
+        bubble.curve(to: NSPoint(x: rect.minX, y: rect.maxY - radius), controlPoint1: NSPoint(x: rect.minX + radius - control, y: rect.maxY), controlPoint2: NSPoint(x: rect.minX, y: rect.maxY - radius + control))
+        bubble.line(to: NSPoint(x: rect.minX, y: rect.minY + radius))
+        bubble.curve(to: NSPoint(x: rect.minX + radius, y: rect.minY), controlPoint1: NSPoint(x: rect.minX, y: rect.minY + radius - control), controlPoint2: NSPoint(x: rect.minX + radius - control, y: rect.minY))
+        bubble.close()
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
+        shadow.shadowBlurRadius = 16
+        shadow.shadowOffset = NSSize(width: 0, height: -4)
+        shadow.set()
         fill.setFill()
-        NSColor(
-            calibratedRed: 236 / 255,
-            green: 70 / 255,
-            blue: 142 / 255,
-            alpha: 0.92
-        ).setStroke()
-        let bubble = NSBezierPath(
-            roundedRect: rect,
-            xRadius: 18,
-            yRadius: 18
-        )
-        bubble.lineWidth = 3
         bubble.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        // The gradient and shadow follow the same complete silhouette.
+        NSGraphicsContext.saveGraphicsState()
+        bubble.addClip()
+        let gradient = NSGradient(starting: fill, ending: NSColor(
+            calibratedRed: 0.985, green: 0.90, blue: 0.92, alpha: 1
+        ))!
+        gradient.draw(
+            from: NSPoint(x: rect.minX, y: rect.minY),
+            to: NSPoint(x: rect.maxX, y: rect.maxY + 10),
+            options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation]
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor(calibratedRed: 0.88, green: 0.59, blue: 0.67, alpha: 0.92).setStroke()
+        bubble.lineWidth = 2
         bubble.stroke()
 
-        let pointer = NSBezierPath()
-        pointer.move(to: NSPoint(x: 396, y: rect.maxY - 2))
-        pointer.line(to: NSPoint(x: 424, y: rect.maxY - 2))
-        pointer.line(to: NSPoint(x: 410, y: rect.maxY + 22))
-        pointer.close()
-        fill.setFill()
-        pointer.fill()
-
-        let titleAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
-            .foregroundColor: NSColor(
-                calibratedRed: 48 / 255,
-                green: 40 / 255,
-                blue: 42 / 255,
-                alpha: 1
-            ),
-        ]
-        ("Codex 请求权限" as NSString).draw(
-            at: NSPoint(x: rect.minX + 14, y: rect.minY + 12),
-            withAttributes: titleAttributes
+        let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let titleOrigin = NSPoint(x: rect.minX + 34, y: rect.minY + 17)
+        // Align the dot optically to the capital letters, rather than the line box.
+        let titleCapCenter = titleOrigin.y + titleFont.ascender - titleFont.capHeight / 2
+        rose.setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.minX + 20, y: titleCapCenter - 3, width: 6, height: 6)).fill()
+        ("CODEX · 需要你的确认" as NSString).draw(
+            at: titleOrigin,
+            withAttributes: [.font: titleFont, .foregroundColor: rose]
         )
-
-        let summary = request["summary"] as? String
-            ?? "Codex 正在请求权限"
-        permissionBodyText(summary).draw(
-            with: NSRect(
-                x: rect.minX + 18,
-                y: rect.minY + 43,
-                width: permissionBodyWidth,
-                height: permissionBodyHeight
-            ),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        )
+        let summary = request["summary"] as? String ?? "Codex 正在请求权限"
+        let bodyRect = NSRect(x: rect.minX + 20, y: rect.minY + 43, width: permissionBodyWidth, height: permissionTextHeight)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bodyRect).addClip()
+        permissionBodyText(summary).draw(with: bodyRect, options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine], context: nil)
+        NSGraphicsContext.restoreGraphicsState()
 
         for (action, buttonRect) in permissionButtons {
             let pressed = permissionButtonDown == action
             let adjusted = buttonRect.offsetBy(dx: 0, dy: pressed ? 1 : 0)
             let isAllow = action == "allow"
-            let buttonFill = isAllow
-                ? NSColor(
-                    calibratedRed: 94 / 255,
-                    green: 199 / 255,
-                    blue: 123 / 255,
-                    alpha: 1
-                )
-                : NSColor(
-                    calibratedRed: 1,
-                    green: 237 / 255,
-                    blue: 242 / 255,
-                    alpha: 1
-                )
-            let buttonOutline = isAllow
-                ? NSColor(
-                    calibratedRed: 69 / 255,
-                    green: 174 / 255,
-                    blue: 99 / 255,
-                    alpha: 1
-                )
-                : NSColor(
-                    calibratedRed: 236 / 255,
-                    green: 70 / 255,
-                    blue: 142 / 255,
-                    alpha: 0.9
-                )
-            buttonFill.setFill()
-            buttonOutline.setStroke()
-            let path = NSBezierPath(
-                roundedRect: adjusted,
-                xRadius: 16,
-                yRadius: 16
-            )
-            path.lineWidth = 3
-            path.fill()
-            path.stroke()
-
-            let label = isAllow ? "允许" : "拒绝"
-            let labelColor = isAllow
-                ? NSColor.white
-                : NSColor(
-                    calibratedRed: 198 / 255,
-                    green: 47 / 255,
-                    blue: 112 / 255,
-                    alpha: 1
-                )
+            (isAllow ? rose : NSColor(calibratedRed: 0.94, green: 0.91, blue: 0.88, alpha: 1)).setFill()
+            NSBezierPath(roundedRect: adjusted, xRadius: 10, yRadius: 10).fill()
+            let label = isAllow ? "允许一次" : "拒绝"
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-                .foregroundColor: labelColor,
+                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: isAllow ? NSColor.white : ink,
             ]
             let size = (label as NSString).size(withAttributes: attributes)
-            (label as NSString).draw(
-                at: NSPoint(
-                    x: adjusted.midX - size.width / 2,
-                    y: adjusted.midY - size.height / 2
-                ),
-                withAttributes: attributes
-            )
+            (label as NSString).draw(at: NSPoint(x: adjusted.midX - size.width / 2, y: adjusted.midY - size.height / 2), withAttributes: attributes)
         }
     }
 
     func handleMouseDown(point: NSPoint) {
+        for node in families.children(families.selectedID).prefix(3) {
+            if let center = childPositions[node.id], NSRect(x: center.x-45, y: center.y-70, width: 90, height: 76).contains(point), node.status == "permission" {
+                focusedChildID = node.id; bridgeToken = ""; refreshFamilyState(force: true); return
+            }
+        }
         guard edgePlacement == nil, edgeTransition == nil else {
             return
         }
@@ -1383,6 +1758,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         mouseDown = true
         dragging = false
         dragStartCursor = NSEvent.mouseLocation
+        nudgeLastCursor = dragStartCursor
         dragStartWindowOrigin = window.frame.origin
         dragPrevious = VisualSnapshot(
             transientKey: transientKey,
@@ -1392,7 +1768,18 @@ final class PetController: NSObject, NSApplicationDelegate {
         )
         dragCanPlayFlat = mode == "responsive"
             && transientKey == nil
-            && bridgeStatus != "thinking"
+            && !["thinking", "working", "compacting", "interrupted"].contains(bridgeStatus)
+    }
+
+    private func updateNudgeDirection(_ cursor: NSPoint) {
+        guard let previous = nudgeLastCursor else { nudgeLastCursor = cursor; return }
+        let dx = cursor.x - previous.x
+        // Accumulate small movements; vertical movement preserves the last facing.
+        if abs(dx) >= 2 {
+            nudgeFacesRight = dx > 0
+            nudgeLastCursor = cursor
+            if currentKey == "left" { renderCurrent() }
+        }
     }
 
     func handleMouseDragged() {
@@ -1412,6 +1799,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             return
         }
         let cursor = NSEvent.mouseLocation
+        updateNudgeDirection(cursor)
         let deltaX = cursor.x - startCursor.x
         let deltaY = cursor.y - startCursor.y
         if !dragging {
@@ -1420,13 +1808,24 @@ final class PetController: NSObject, NSApplicationDelegate {
             else {
                 return
             }
+            dragAnimationStarted = ProcessInfo.processInfo.systemUptime
             dragging = true
+            if leisure.phase != .awake {
+                // Dragging during the sleep-entry gesture only defers it;
+                // it is not a new task and must not draw another idle interval.
+                interruptLeisure(preserveDeadline: leisure.phase == .entering)
+                dragPrevious = VisualSnapshot(transientKey: nil, transientOnce: false, frameIndex: 0, successEffectStarted: nil)
+            }
             successEffectStarted = nil
             switchVisual("left")
         }
         window.setFrameOrigin(
             NSPoint(x: startOrigin.x + deltaX, y: startOrigin.y + deltaY)
         )
+        if beginEdgeHideIfNeeded() {
+            mouseDown = false; dragging = false
+            dragStartCursor = nil; dragStartWindowOrigin = nil; dragPrevious = nil
+        }
     }
 
     func handleMouseUp(point: NSPoint) {
@@ -1462,7 +1861,12 @@ final class PetController: NSObject, NSApplicationDelegate {
             renderCurrent()
             scheduleCurrent()
             _ = beginEdgeHideIfNeeded()
-        } else if canPlayFlat {
+            // Keep the original deadline while dragging; release immediately
+            // starts a due sleep entry unless higher-priority work still owns it.
+            updateLeisure()
+        } else if mode == "responsive", leisure.phase == .entering || leisure.phase == .sleeping {
+            sleepClick()
+        } else if canPlayFlat && !activityRequiresVisiblePet && permissionRequest == nil {
             switchVisual("flat", once: true)
         }
     }
@@ -1493,14 +1897,10 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     func showContextMenu(at point: NSPoint, in view: NSView) {
         let menu = NSMenu(title: appDisplayName)
+        menu.autoenablesItems = false
         let entries: [(String, String)] = [
             ("状态互动（Codex）", "responsive"),
-            ("预览：呼吸待机", "idle"),
-            ("预览：左拱", "left"),
-            ("预览：猪追胡萝卜", "carrot"),
-            ("预览：跳跳猪", "jump"),
-            ("预览：躺平", "flat"),
-            ("预览：疑问猪", "question"),
+            ("休息模式", "rest"),
         ]
         for (label, modeValue) in entries {
             let item = NSMenuItem(
@@ -1510,7 +1910,8 @@ final class PetController: NSObject, NSApplicationDelegate {
             )
             item.target = self
             item.representedObject = modeValue
-            item.state = mode == modeValue ? .on : .off
+            item.state = modeValue == "rest" ? ((leisure.phase == .entering || leisure.phase == .sleeping) && mode == "responsive" ? .on : .off) : (mode == modeValue ? .on : .off)
+            if modeValue == "rest" { item.isEnabled = !leisureBlocked }
             menu.addItem(item)
         }
         menu.addItem(.separator())
@@ -1561,7 +1962,11 @@ final class PetController: NSObject, NSApplicationDelegate {
         guard let selected = sender.representedObject as? String else {
             return
         }
+        if selected == "rest" { startRest(); return }
+        restartLeisureClock()
         mode = selected
+        if selected == "sleep_entry" { sleepPreviewEpoch = leisureNow }
+        if selected == "packing_random" { selectPackingAnimation() }
         transientKey = nil
         transientOnce = false
         successEffectStarted = nil
@@ -1630,13 +2035,13 @@ func runManifestSelfTest() throws {
             hasPermissionRequest: false,
             hasTransientAnimation: false
         ),
-        !canEnterEdgeHide(
+        canEnterEdgeHide(
             mode: "responsive",
             bridgeStatus: "thinking",
             hasPermissionRequest: false,
             hasTransientAnimation: false
         ),
-        !canEnterEdgeHide(
+        canEnterEdgeHide(
             mode: "responsive",
             bridgeStatus: "idle",
             hasPermissionRequest: true,
@@ -1801,9 +2206,9 @@ func runManifestSelfTest() throws {
     guard
         manifest.format_version == 1,
         manifest.window_size == 640,
-        Set(manifest.animations.keys) == expected,
+        Set(manifest.animations.keys).filter({ !$0.hasPrefix("packing_") }).subtracting(["reading", "sleep_entry", "sleep_body", "sleep_z", "sleep_tail", "snack"]) == expected,
         manifest.animations["idle"]?.frames.count == 49,
-        manifest.animations["left"]?.frames.count == 15,
+        [8, 15, 30, 37, 47].contains(manifest.animations["left"]?.frames.count ?? 0),
         manifest.animations["carrot"]?.frames.count == 19,
         manifest.animations["jump"]?.frames.count == 61,
         manifest.animations["flat"]?.frames.count == 96,

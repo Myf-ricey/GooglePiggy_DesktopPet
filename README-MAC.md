@@ -1,6 +1,6 @@
 # GooglePiggy Desktop Pet for macOS
 
-这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.3.2`。它会陪你
+这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.4.0`。它会陪你
 观察 Codex 的工作状态，也会在空闲时悄悄躲到屏幕边缘：
 
 - 呼吸待机、点击躺平、拖动左拱；
@@ -9,21 +9,21 @@
 - 尾巴进出使用与 Windows 端一致的 60Hz 平滑短动画，能看到猪猪短暂地滑入和滑出；
 - Codex 思考时追胡萝卜，完成时跳跃并显示火花/烟花；
 - Codex 权限请求气泡，以及“允许/拒绝”回传；
-- 右键动作预览、开机自启动和退出；
+- 右键状态互动、休息模式、开机自启动、Hook 授权说明和退出；
 - 透明、无边框、置顶，并可显示在所有桌面空间；
 - 便携应用包，运行时不需要 Python、PowerShell 或 Homebrew。
 
-`v0.3.2` 是跨平台尾巴隐藏版本：Windows 和 macOS 都支持四个物理外边缘的尾巴形态
-隐藏、点击尾巴跳回，以及工作状态触发的自动恢复。Windows 版可从主 README 中的
-便携包链接下载。
+`v0.4.0` 是 macOS 新版：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
 
 ## 系统要求
 
 - macOS 13 Ventura 或更高版本；
-- 优先下载同时支持两类处理器的 `GooglePiggy-macos-universal-v0.3.2`；
+- 优先下载同时支持两类处理器的 `GooglePiggy-macos-universal-v0.4.0`；
 - 也可以下载与 Mac 处理器匹配的较小发布包：
   - `GooglePiggy-macos-arm64`：Apple Silicon（M1/M2/M3/M4/M5 等）；
   - `GooglePiggy-macos-x64`：Intel Mac。
+
+下载：[macOS v0.4.0 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.4.0-macos)。
 
 ## 推荐安装
 
@@ -85,7 +85,7 @@ Codex 不会跳过这项安全检查。更新桌宠后如果 Hook 命令发生�
 - 单击猪猪：在空闲状态播放一次躺平动画。
 - 按住并拖动：猪猪播放左拱动画并跟随鼠标。
 - 空闲时拖到屏幕外边缘并松手：猪猪跳入边缘，只露出尾巴；单击尾巴可跳回。
-- 右键猪猪：切换 Codex 联动、预览任一动作、开关自启动或退出。
+- 右键猪猪：切换 Codex 联动、进入休息模式、开关自启动或退出。
 - 如果 Codex 联动没有反应：右键选择“Codex Hook 首次授权说明…”。
 - Codex 请求权限：点击气泡中的“允许”或“拒绝”。
 
@@ -180,14 +180,14 @@ python3 tools/codex_hook_snapshot.py
 
 ## 从源码构建
 
-构建机需要 Xcode Command Line Tools 和 Python 3.11+：
+构建机需要 Xcode Command Line Tools、Keka（用于 ZIP 打包）和 Python 3.11+：
 
 ```zsh
 chmod +x build-macos.sh
 ./build-macos.sh
 ```
 
-构建会复用 Windows 版同一套动画清理、尺寸归一和锚点算法，然后编译原生 Swift
+构建使用仓库中 `assets/macos-resources` 的最终帧资源，然后编译原生 Swift
 应用、做 ad-hoc 签名、运行黑盒测试，并生成：
 
 ```text
@@ -203,3 +203,21 @@ Apple Silicon 构建机会生成 `arm64` 文件名，Intel 构建机会生成 `x
 本地构建默认使用 ad-hoc 签名，适合测试和开源分发。正式发布建议用你的
 Developer ID Application 证书签名并提交 Apple notarization；这只影响
 Gatekeeper 信任体验，不影响桌宠功能。
+
+## 自动休息与偷吃胡萝卜
+
+状态互动模式下，每轮清醒抽取一次睡眠等待时间：截断正态分布，均值约 10 分钟、标准差约 2.965 分钟，范围 3～30 分钟；约一半落在 8～12 分钟。新的 Codex 任务重新计时，普通点击躺平和清醒期间的拖动均不重置。拖动期间到达睡眠时点时，保留原截止时间，松手后再进入睡觉；若此时出现 Codex 任务，则先处理任务。任务、权限、拖动、拱动和其他临时动作均优先于休闲动作。
+
+睡着后点击：50% 左拱完整两次，回到待机并重新抽取下一轮；50% 仅摇尾巴继续睡，ZZZ 的时钟不中断。睡中点击不会触发躺平。
+
+每轮在开始时抽取偷吃计划：只在 1/3 时点吃占 40%，只在 2/3 时点吃占 40%，两次都吃占 10%，不吃占 10%。忙碌时错过的吃饭时点不补播；偷吃可被点击躺平、拖动和 Codex 动作打断。
+
+右键 **休息模式** 无须等倒计时，直接开始睡觉，并保留上述互动和 Codex 优先级；忙碌时此项不可用。菜单已移除全部动画预览项。
+
+线程动画按线程 ID 和任务回合维护独立的单调时钟，未选中时仍推进。切换回来显示当前帧，不重播入场；同一回合从工具执行回到看书时保留看书进度，拿书播完后只循环阅读段。新回合重置该线程动画；后台已经结束的完成动画不会因切换重播。
+
+## v0.4.0 升级
+
+安装器将旧的 `~/Applications/GooglePiggy.app` 保留到 `~/Applications/GooglePiggy Backups/时间戳/`，新版本使用正式应用路径并接管自启动和 Codex hooks。旧应用不再自动启动。用户状态仍保存在 `~/Library/Application Support/GifPigDesktopPet/`。
+
+正式菜单不再显示动画预览。偷吃采用新版横向像素胡萝卜，包含左右张望、视线高低变化及前半身轻微压缩；睡眠保留打哈欠、趴下回弹、独立 ZZZ 和点击摆尾。

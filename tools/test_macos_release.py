@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -143,6 +144,10 @@ def test_permission(
     expected_tool_name: str,
     expected_summary: str,
 ) -> None:
+    # Each permission fixture is an independent turn. Do not present it as a
+    # stale callback from the previous fixture's actor state.
+    actor_key = base64.b64encode(str(payload["session_id"]).encode()).decode().replace("/", "_")
+    (state_dir / "actors" / (actor_key + ".json")).unlink(missing_ok=True)
     heartbeat = {
         "app": "GooglePiggy Desktop Pet",
         "pid": os.getpid(),
@@ -185,12 +190,12 @@ def test_permission(
     decision_body = output["hookSpecificOutput"]["decision"]
     assert decision_body["behavior"] == decision
     assert request["tool_name"] == expected_tool_name
-    assert request["summary"] == expected_summary
+    assert request["summary"] == expected_summary, (request["summary"], expected_summary)
     assert "Apply patch" not in str(request["summary"])
     assert "*** Begin Patch" not in str(request["summary"])
     assert not request_path.exists()
     assert not response_path.exists()
-    state = read_json(state_dir / "codex-status.json")
+    state = read_json(state_dir / "actors" / (base64.b64encode(str(payload["session_id"]).encode()).decode().replace("/", "_") + ".json"))
     assert state["status"] == ("thinking" if decision == "allow" else "idle")
 
 
@@ -208,12 +213,16 @@ def main() -> None:
     manifest = read_json(app / "Contents" / "Resources" / "animation-manifest.json")
     animations = manifest["animations"]
     assert isinstance(animations, dict)
-    for animation in animations.values():
+    for animation_key, animation in animations.items():
         assert isinstance(animation, dict)
         for frame in animation["frames"]:
             assert isinstance(frame, dict)
             bounds = frame["visible_bounds"]
             assert isinstance(bounds, list) and len(bounds) == 4
+            if animation_key == "sleep_z" and bounds == [0, 0, 0, 0]:
+                with Image.open(app / "Contents" / "Resources" / frame["file"]) as image:
+                    assert image.convert("RGBA").getchannel("A").getbbox() is None
+                continue
             assert 0 <= bounds[0] < bounds[2] <= 640
             assert 0 <= bounds[1] < bounds[3] <= 640
     reveal_frames = animations["edge_reveal"]["frames"]
@@ -304,7 +313,10 @@ def main() -> None:
         )
         assert "paragraph.lineBreakMode = .byCharWrapping" in controller_source
         assert "permissionBodyText(summary).draw(" in controller_source
-        assert ".truncatesLastVisibleLine" not in controller_source
+        assert "NSBezierPath(rect: bodyRect).addClip()" in controller_source
+        menu_source = controller_source[controller_source.index("func showContextMenu"):controller_source.index("@objc", controller_source.index("func showContextMenu"))]
+        assert "预览：" not in menu_source
+        assert "休息模式" in menu_source
         assert "beginEdgeHideIfNeeded()" in controller_source
         assert "activityRequiresVisiblePet" in controller_source
         assert "startEdgeMotion(to: target" in controller_source
@@ -327,7 +339,7 @@ def main() -> None:
             "bottomRevealDropHeightMultiplier: CGFloat = 1"
             in edge_hiding_source
         )
-        assert "bottomDrop: bottomRevealDrop(for:" in controller_source
+        assert "bottomDrop: 0" in controller_source
         assert (
             "EDGE_TAIL_COMMON_CLOCKWISE_TILT_DEGREES = 55"
             in asset_export_source
@@ -411,8 +423,8 @@ def main() -> None:
                 "turn_id": "turn",
             },
         )
-        state = read_json(state_dir / "codex-status.json")
-        assert state["status"] == "thinking"
+        state = read_json(state_dir / "actors" / "c2Vzc2lvbg==.json")
+        assert state["status"] == "working"
 
         run(
             executable,
@@ -424,7 +436,7 @@ def main() -> None:
                 "turn_id": "turn",
             },
         )
-        state = read_json(state_dir / "codex-status.json")
+        state = read_json(state_dir / "actors" / "c2Vzc2lvbg==.json")
         assert state["status"] == "success"
 
         run(
@@ -437,7 +449,7 @@ def main() -> None:
                 "turn_id": "turn",
             },
         )
-        state = read_json(state_dir / "codex-status.json")
+        state = read_json(state_dir / "actors" / "c2Vzc2lvbg==.json")
         assert state["status"] == "success"
 
         shell_permission = {
@@ -490,10 +502,7 @@ def main() -> None:
             "allow",
             shell_with_chinese_reason,
             "终端命令",
-            (
-                "Codex 准备创建或覆盖文件"
-                f"“{Path.cwd() / '测试一下.txt'}”，是否允许？"
-            ),
+            chinese_reason,
         )
 
         apply_patch_permission = {
