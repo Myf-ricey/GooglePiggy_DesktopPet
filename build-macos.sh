@@ -122,13 +122,18 @@ mkdir -p "$RELEASE_DIR"
 /usr/bin/ditto README-MAC.md "$RELEASE_DIR/README-MAC.md"
 chmod 755 "$RELEASE_DIR/install.command" "$RELEASE_DIR/uninstall.command"
 
-KEKA_CLI="${KEKA_CLI:-/Applications/Keka.app/Contents/MacOS/Keka}"
-if [[ ! -x "$KEKA_CLI" ]]; then
-    print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
-    exit 1
+if [[ "${ZIP_PACKAGER:-keka}" == "ditto" ]]; then
+    /usr/bin/ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "$RELEASE_DIR" "$ZIP_PATH"
+    /usr/bin/unzip -tq "$ZIP_PATH"
+else
+    KEKA_CLI="${KEKA_CLI:-/Applications/Keka.app/Contents/MacOS/Keka}"
+    if [[ ! -x "$KEKA_CLI" ]]; then
+        print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
+        exit 1
+    fi
+    (cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip "$ZIP_PATH" "$RELEASE_NAME")
+    "$KEKA_CLI" --cli 7zz t "$ZIP_PATH"
 fi
-(cd "$BUILD_ROOT" && "$KEKA_CLI" --ignore-file-access --cli 7zz a -tzip "$ZIP_PATH" "$RELEASE_NAME")
-"$KEKA_CLI" --ignore-file-access --cli 7zz t "$ZIP_PATH"
 
 if [[ "${BUILD_DMG:-1}" == "1" ]]; then
     /usr/bin/hdiutil create \

@@ -26,7 +26,7 @@ macos_release_test=ok
 codesign --verify --deep --strict build/macos/GooglePiggy.app
 lipo -info build/macos/GooglePiggy.app/Contents/MacOS/GooglePiggy
 hdiutil verify dist/GooglePiggy-macos-universal.dmg
-/Applications/Keka.app/Contents/MacOS/Keka --ignore-file-access --cli 7zz t dist/GooglePiggy-macos-universal.zip
+/Applications/Keka.app/Contents/MacOS/Keka --cli 7zz t dist/GooglePiggy-macos-universal.zip
 ```
 
 `lipo` must report both `arm64` and `x86_64`.
@@ -97,3 +97,5 @@ GooglePiggy-macos-x64.dmg
 - Publish the macOS-only tag `v0.4.0-macos`; retain Windows releases.
 
 Native builds use the checked-in frame resources and must work without `cache/`. The legacy Python `smoke_test.py` belongs to the generated Windows asset pipeline; native release validation runs `--self-test` and `test_macos_release.py`.
+
+Local ZIP builds default to Keka. GitHub-hosted runners explicitly set `ZIP_PACKAGER=ditto` because Keka requires interactive sandbox directory access; CI verifies the ZIP with `unzip -tq`.
