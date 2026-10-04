@@ -63,7 +63,8 @@ export SWIFT_MODULE_CACHE_PATH="$MODULE_CACHE_DIR"
 cd "$PROJECT_DIR"
 # Approved native frames are versioned so a clean checkout reproduces the release.
 /usr/bin/ditto assets/macos-resources "$RESOURCES_DIR"
-"$BUILD_PYTHON" tools/smoke_test.py
+# The legacy Python smoke test requires a generated Windows cache.
+# Native resources are checked by --self-test and test_macos_release.py below.
 
 /usr/bin/ditto macos/Info.plist "$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy \

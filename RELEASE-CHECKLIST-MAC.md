@@ -16,7 +16,6 @@ dist/GooglePiggy-macos-universal.dmg
 The build must finish with:
 
 ```text
-smoke_test=ok
 macos_manifest_test=ok
 macos_release_test=ok
 ```
@@ -96,3 +95,5 @@ GooglePiggy-macos-x64.dmg
 - Verify the context menu has no animation previews.
 - Verify the installed LaunchAgent and Codex hooks reference the production app.
 - Publish the macOS-only tag `v0.4.0-macos`; retain Windows releases.
+
+Native builds use the checked-in frame resources and must work without `cache/`. The legacy Python `smoke_test.py` belongs to the generated Windows asset pipeline; native release validation runs `--self-test` and `test_macos_release.py`.
