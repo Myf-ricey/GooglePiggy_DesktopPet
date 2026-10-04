@@ -26,7 +26,7 @@ macos_release_test=ok
 codesign --verify --deep --strict build/macos/GooglePiggy.app
 lipo -info build/macos/GooglePiggy.app/Contents/MacOS/GooglePiggy
 hdiutil verify dist/GooglePiggy-macos-universal.dmg
-/Applications/Keka.app/Contents/MacOS/Keka --cli 7zz t dist/GooglePiggy-macos-universal.zip
+/Applications/Keka.app/Contents/MacOS/Keka --ignore-file-access --cli 7zz t dist/GooglePiggy-macos-universal.zip
 ```
 
 `lipo` must report both `arm64` and `x86_64`.
