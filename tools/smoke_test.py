@@ -25,7 +25,8 @@ else:
 def main() -> None:
     source_dir = PROJECT_DIR / "assets" / "source-gifs"
     animations = pig_pet.load_animation_cache(PROJECT_DIR / "cache", source_dir)
-    assert animations is not None
+    if animations is None:
+        animations = pig_pet.build_animations(source_dir)
     assert set(animations) == {
         "idle",
         "left",

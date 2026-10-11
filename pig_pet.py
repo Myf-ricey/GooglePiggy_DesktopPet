@@ -18,6 +18,7 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from functools import lru_cache
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -1482,6 +1483,7 @@ def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     os.replace(temporary_path, path)
 
 
+@lru_cache(maxsize=32)
 def load_ui_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     fonts_dir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     candidates = [
@@ -1693,7 +1695,7 @@ class PigPet:
         y = work_area.bottom - WINDOW_SIZE - 36
 
         self.hwnd = user32.CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            WS_EX_LAYERED | WS_EX_TOPMOST | (0 if os.environ.get('GOOGLEPIGGY_QA_WINDOW') == '1' else WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
             CLASS_NAME,
             APP_NAME,
             WS_POPUP,
@@ -2243,12 +2245,7 @@ class PigPet:
             self.edge_transition = None
             return False
         pet_bounds = self._current_pet_local_bounds()
-        bottom_drop = (
-            (pet_bounds[3] - pet_bounds[1])
-            * EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER
-            if placement.edge == "bottom"
-            else 0.0
-        )
+        bottom_drop = self._edge_bottom_drop(placement.edge, pet_bounds)
         delta = revealed_delta(
             placement.edge,
             content_frame,
@@ -2265,17 +2262,15 @@ class PigPet:
             return False
         return True
 
+    def _edge_bottom_drop(self, edge: str, pet_bounds: tuple[int, int, int, int]) -> float:
+        return (pet_bounds[3] - pet_bounds[1]) * EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER if edge == 'bottom' else 0.0
+
     def _settle_revealed_window(self, placement: EdgePlacement) -> None:
         content_frame = self._screen_bounds_for_local(self._current_content_local_bounds())
         if content_frame is None or self.hwnd is None:
             return
         pet_bounds = self._current_pet_local_bounds()
-        bottom_drop = (
-            (pet_bounds[3] - pet_bounds[1])
-            * EDGE_BOTTOM_REVEAL_DROP_HEIGHT_MULTIPLIER
-            if placement.edge == "bottom"
-            else 0.0
-        )
+        bottom_drop = self._edge_bottom_drop(placement.edge, pet_bounds)
         delta = revealed_delta(
             placement.edge,
             content_frame,
@@ -3048,15 +3043,19 @@ def main() -> None:
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--status-file", type=Path)
     parser.add_argument("--qa-only", action="store_true")
+    parser.add_argument("--no-codex-observer", action="store_true", help="Isolated event replay without real Codex state")
+    parser.add_argument("--qa-window", action="store_true", help="Expose a taskbar window for native GUI automation")
     parser.add_argument(
         "--bridge-event",
-        choices=["idle", "thinking", "success", "error", "permission"],
+        choices=["idle", "thinking", "working", "compacting", "interrupted", "success", "error", "permission"],
     )
     parser.add_argument("--bridge-message", default="")
     parser.add_argument("--permission-request-id", default="")
     parser.add_argument("--enable-autostart", action="store_true")
     parser.add_argument("--disable-autostart", action="store_true")
     args = parser.parse_args()
+    if args.qa_window:
+        os.environ['GOOGLEPIGGY_QA_WINDOW'] = '1'
 
     app_dir = application_dir()
     qa_dir = app_dir / "qa"
@@ -3080,22 +3079,41 @@ def main() -> None:
             set_autostart(args.enable_autostart, app_dir)
             return
 
-        write_json_atomic(
-            heartbeat_path_for_status(status_path),
-            {
-                "app": APP_NAME,
-                "pid": os.getpid(),
-                "updated_at": utc_timestamp(),
-                "status_path": str(status_path),
-                "phase": "starting",
-            },
-        )
+        if not args.qa_only:
+            write_json_atomic(
+                heartbeat_path_for_status(status_path),
+                {
+                    "app": APP_NAME,
+                    "pid": os.getpid(),
+                    "updated_at": utc_timestamp(),
+                    "status_path": str(status_path),
+                    "phase": "starting",
+                },
+            )
 
         source_dir = (
             args.source_dir.expanduser().resolve()
             if args.source_dir
             else default_source_dir(app_dir).resolve()
         )
+        manifest_dir = app_dir / "assets" / "macos-resources"
+        if (manifest_dir / "animation-manifest.json").is_file():
+            from animation_clock import load_manifest
+            from windows_pet import WindowsPet
+            animations = load_manifest(manifest_dir)
+            if args.qa_only:
+                qa_dir.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(qa_dir / 'manifest-report.json', {
+                    key: {'frames': len(clip.frames), 'duration_ms': clip.total_duration, 'loop_start': clip.loop_start}
+                    for key, clip in animations.items()
+                })
+                return
+            mutex_name = 'Local\\GifPigDesktopPet' if not args.status_file else 'Local\\GifPigDesktopPet-' + hashlib.sha256(str(status_path).encode()).hexdigest()[:12]
+            mutex = kernel32.CreateMutexW(None, False, mutex_name)
+            if not mutex or kernel32.GetLastError() == 183:
+                return
+            WindowsPet(animations, qa_dir / 'manifest-report.json', app_dir, status_path, observe=not args.no_codex_observer).run()
+            return
         cache_dir = app_dir / "cache"
         if args.qa_only:
             animations = build_animations(source_dir)

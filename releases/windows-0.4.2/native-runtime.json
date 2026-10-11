@@ -1,0 +1,20 @@
+{
+  "platform": "Windows",
+  "passed": true,
+  "expected_checks": 12,
+  "pass_items": [
+    "Native cold start, fresh heartbeat, isolated empty state",
+    "12 concurrent PS5.1 hooks preserve all actor files and UTF-8",
+    "Switching actors does not replay reading intro",
+    "Active family + 4 children hides; same-turn tool receipt stays hidden",
+    "New turn reveals whole family automatically",
+    "All four physical edges hide/reveal a family on the native window",
+    "Native interrupt remains question after late tool result",
+    "Native compaction resists late tool receipt",
+    "Concurrent permission IPC returns matched allow/deny and removes request files",
+    "Two simultaneous requests from the same actor keep independent request IDs",
+    "Native rest sequence, independent sleeping tail and two-loop wake",
+    "Native GUI exits without orphan process"
+  ],
+  "version": "0.4.2-windows"
+}

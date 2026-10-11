@@ -8,235 +8,6 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 
-function Install-TaskCompleteWatcher {
-    param([string]$StateDirectory)
-
-    $watcherPath = Join-Path $StateDirectory 'codex-task-complete-watch.ps1'
-    $watcherSource = @'
-param(
-    [string]$SessionId,
-    [string]$TurnId,
-    [string]$StateDirectory
-)
-
-$ErrorActionPreference = 'SilentlyContinue'
-
-function Get-BridgeTimestamp {
-    [DateTimeOffset]::UtcNow.ToString('o')
-}
-
-function New-BridgeToken {
-    ('{0}-{1}' -f [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(), [Guid]::NewGuid().ToString('N'))
-}
-
-function Append-BridgeLog {
-    param([object]$Entry)
-
-    try {
-        $eventLogPath = Join-Path $StateDirectory 'codex-hook-events.jsonl'
-        [System.IO.File]::AppendAllText(
-            $eventLogPath,
-            (($Entry | ConvertTo-Json -Compress) + [Environment]::NewLine),
-            (New-Object System.Text.UTF8Encoding($false))
-        )
-    } catch {
-    }
-}
-
-function Read-BridgeState {
-    try {
-        $statePath = Join-Path $StateDirectory 'codex-status.json'
-        if (-not (Test-Path -LiteralPath $statePath)) {
-            return $null
-        }
-        return Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    } catch {
-        return $null
-    }
-}
-
-function Find-CodexSessionFile {
-    if ([string]::IsNullOrWhiteSpace($SessionId)) {
-        return $null
-    }
-
-    $codexHome = if ($env:CODEX_HOME) {
-        $env:CODEX_HOME
-    } else {
-        Join-Path $HOME '.codex'
-    }
-    $sessionsDirectory = Join-Path $codexHome 'sessions'
-    if (-not (Test-Path -LiteralPath $sessionsDirectory)) {
-        return $null
-    }
-
-    try {
-        return Get-ChildItem -LiteralPath $sessionsDirectory -Recurse -Filter ("*{0}*.jsonl" -f $SessionId) -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-    } catch {
-        return $null
-    }
-}
-
-function Test-TaskComplete {
-    param([string]$SessionFile)
-
-    if ([string]::IsNullOrWhiteSpace($SessionFile) -or -not (Test-Path -LiteralPath $SessionFile)) {
-        return $false
-    }
-
-    try {
-        foreach ($line in (Get-Content -LiteralPath $SessionFile -Tail 1000 -Encoding UTF8)) {
-            try {
-                $record = $line | ConvertFrom-Json
-            } catch {
-                continue
-            }
-
-            if ([string]$record.type -ne 'event_msg') {
-                continue
-            }
-            if (-not $record.payload) {
-                continue
-            }
-            if ([string]$record.payload.type -eq 'task_complete' -and [string]$record.payload.turn_id -eq $TurnId) {
-                return $true
-            }
-        }
-    } catch {
-        return $false
-    }
-
-    return $false
-}
-
-function Write-TaskCompleteSuccess {
-    $statePath = Join-Path $StateDirectory 'codex-status.json'
-    $temporaryPath = Join-Path $StateDirectory 'codex-status.json.tmp'
-    $updatedAt = Get-BridgeTimestamp
-    $state = [ordered]@{
-        status = 'success'
-        token = New-BridgeToken
-        updated_at = $updatedAt
-        source = 'codex-task-complete-watch'
-        event = 'TaskCompleteFallback'
-        message = ''
-        session_id = $SessionId
-        turn_id = $TurnId
-    }
-
-    try {
-        [System.IO.File]::WriteAllText(
-            $temporaryPath,
-            (($state | ConvertTo-Json) + [Environment]::NewLine),
-            (New-Object System.Text.UTF8Encoding($false))
-        )
-        Move-Item -LiteralPath $temporaryPath -Destination $statePath -Force
-        Append-BridgeLog ([ordered]@{
-            updated_at = $updatedAt
-            status = 'success'
-            event = 'TaskCompleteFallback'
-            session_id = $SessionId
-            turn_id = $TurnId
-        })
-    } catch {
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($SessionId) -or [string]::IsNullOrWhiteSpace($TurnId) -or [string]::IsNullOrWhiteSpace($StateDirectory)) {
-    return
-}
-
-$deadline = (Get-Date).AddMinutes(10)
-$sessionFile = $null
-
-while ((Get-Date) -lt $deadline) {
-    $currentState = Read-BridgeState
-    if ($null -ne $currentState) {
-        if ([string]$currentState.status -ne 'thinking') {
-            return
-        }
-        if ([string]$currentState.session_id -ne $SessionId -or [string]$currentState.turn_id -ne $TurnId) {
-            return
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($sessionFile) -or -not (Test-Path -LiteralPath $sessionFile)) {
-        $sessionFile = Find-CodexSessionFile
-    }
-
-    if (Test-TaskComplete -SessionFile $sessionFile) {
-        $currentState = Read-BridgeState
-        if ($null -eq $currentState -or (
-            [string]$currentState.status -eq 'thinking' -and
-            [string]$currentState.session_id -eq $SessionId -and
-            [string]$currentState.turn_id -eq $TurnId
-        )) {
-            Write-TaskCompleteSuccess
-        }
-        return
-    }
-
-    Start-Sleep -Milliseconds 750
-}
-
-Append-BridgeLog ([ordered]@{
-    updated_at = Get-BridgeTimestamp
-    status = 'thinking'
-    event = 'TaskCompleteFallbackTimeout'
-    session_id = $SessionId
-    turn_id = $TurnId
-})
-'@
-
-    try {
-        [System.IO.File]::WriteAllText(
-            $watcherPath,
-            $watcherSource,
-            (New-Object System.Text.UTF8Encoding($false))
-        )
-    } catch {
-    }
-
-    return $watcherPath
-}
-
-function Start-TaskCompleteWatcher {
-    param(
-        [string]$SessionId,
-        [string]$TurnId,
-        [string]$StateDirectory
-    )
-
-    if ([string]::IsNullOrWhiteSpace($SessionId) -or [string]::IsNullOrWhiteSpace($TurnId)) {
-        return
-    }
-
-    try {
-        $watcherPath = Install-TaskCompleteWatcher -StateDirectory $StateDirectory
-        if ([string]::IsNullOrWhiteSpace($watcherPath) -or -not (Test-Path -LiteralPath $watcherPath)) {
-            return
-        }
-
-        $arguments = @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            ('"{0}"' -f $watcherPath),
-            '-SessionId',
-            ('"{0}"' -f $SessionId),
-            '-TurnId',
-            ('"{0}"' -f $TurnId),
-            '-StateDirectory',
-            ('"{0}"' -f $StateDirectory)
-        )
-        Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $arguments | Out-Null
-    } catch {
-    }
-}
-
 function Get-BridgeTimestamp {
     [DateTimeOffset]::UtcNow.ToString('o')
 }
@@ -246,7 +17,38 @@ function New-BridgeToken {
 }
 
 function Get-BridgeStateDirectory {
+    if ($env:GOOGLEPIGGY_STATE_DIR) { return $env:GOOGLEPIGGY_STATE_DIR }
     Join-Path $env:LOCALAPPDATA 'GifPigDesktopPet'
+}
+
+function Get-ActorStatePath {
+    param([string]$StateDirectory)
+    if ([string]::IsNullOrWhiteSpace($script:hookActorId)) {
+        return (Join-Path $StateDirectory 'codex-status.json')
+    }
+    $key = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:hookActorId)).Replace('/', '_')
+    return (Join-Path (Join-Path $StateDirectory 'actors') ($key + '.json'))
+}
+
+function Write-AtomicJson {
+    param([string]$Path, [object]$Value)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary, (($Value | ConvertTo-Json -Depth 12) + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
+        for ($attempt = 0; $attempt -lt 8; $attempt++) {
+            try {
+                if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
+                else { [IO.File]::Move($temporary, $Path) }
+                return
+            } catch {
+                if ($attempt -eq 7) { throw }
+                Start-Sleep -Milliseconds (10 * ($attempt + 1))
+            }
+        }
+    } finally {
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
 }
 
 function Append-BridgeEvent {
@@ -258,11 +60,12 @@ function Append-BridgeEvent {
     try {
         New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
         $eventLogPath = Join-Path $StateDirectory 'codex-hook-events.jsonl'
-        [System.IO.File]::AppendAllText(
-            $eventLogPath,
-            (($Entry | ConvertTo-Json -Compress -Depth 8) + [Environment]::NewLine),
-            (New-Object System.Text.UTF8Encoding($false))
-        )
+        for ($attempt = 0; $attempt -lt 8; $attempt++) {
+            try {
+                [System.IO.File]::AppendAllText($eventLogPath, (($Entry | ConvertTo-Json -Compress -Depth 8) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
+                break
+            } catch { Start-Sleep -Milliseconds (10 * ($attempt + 1)) }
+        }
     } catch {
     }
 }
@@ -271,7 +74,7 @@ function Read-BridgeStateFile {
     param([string]$StateDirectory)
 
     try {
-        $statePath = Join-Path $StateDirectory 'codex-status.json'
+        $statePath = Get-ActorStatePath -StateDirectory $StateDirectory
         if (-not (Test-Path -LiteralPath $statePath)) {
             return $null
         }
@@ -294,8 +97,7 @@ function Write-BridgeStateFile {
     )
 
     New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
-    $statePath = Join-Path $StateDirectory 'codex-status.json'
-    $temporaryPath = Join-Path $StateDirectory 'codex-status.json.tmp'
+    $statePath = Get-ActorStatePath -StateDirectory $StateDirectory
     $updatedAt = Get-BridgeTimestamp
     $state = [ordered]@{
         status = $Status
@@ -306,16 +108,25 @@ function Write-BridgeStateFile {
         message = $Message
         session_id = $SessionId
         turn_id = $TurnId
+        received_at = [double]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) / 1000
+    }
+    foreach ($name in @('agent_id','agent_type','cwd','transcript_path','trigger','tool_name','tool_use_id')) {
+        $value = Get-ObjectPropertyValue -Object $script:hookPayload -Names @($name)
+        if ($null -ne $value) { $state[$name] = $value }
+    }
+    if ($script:hookPayload.prompt) {
+        $preview = [string]$script:hookPayload.prompt
+        $state.prompt_preview = $preview.Substring(0, [Math]::Min(100, $preview.Length))
     }
     if (-not [string]::IsNullOrWhiteSpace($PermissionRequestId)) {
         $state.permission_request_id = $PermissionRequestId
     }
-    [System.IO.File]::WriteAllText(
-        $temporaryPath,
-        (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
-        (New-Object System.Text.UTF8Encoding($false))
-    )
-    Move-Item -LiteralPath $temporaryPath -Destination $statePath -Force
+    Write-AtomicJson -Path $statePath -Value $state
+    if (-not [string]::IsNullOrWhiteSpace($script:hookActorId)) {
+        $eventDirectory = Join-Path $StateDirectory 'family-events'
+        $eventFile = ('{0:D20}-{1}.json' -f ([long]($state.received_at * 1000000)), [Guid]::NewGuid().ToString('N'))
+        Write-AtomicJson -Path (Join-Path $eventDirectory $eventFile) -Value $state
+    }
 
     $logState = [ordered]@{
         updated_at = $updatedAt
@@ -361,7 +172,7 @@ function Test-PigPetHeartbeat {
 }
 
 function Protect-PermissionText {
-    param([string]$Text)
+    param([string]$Text, [int]$MaxLength = 260)
 
     if ([string]::IsNullOrWhiteSpace($Text)) {
         return ''
@@ -369,8 +180,8 @@ function Protect-PermissionText {
     $value = $Text -replace '(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*["'']?[^"''\s,;]+', '$1=[redacted]'
     $value = $value -replace '(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._~+/=-]+', '$1[redacted]'
     $value = $value -replace '[A-Za-z0-9_\-]{72,}', '[redacted-token]'
-    if ($value.Length -gt 260) {
-        $value = $value.Substring(0, 257) + '...'
+    if ($MaxLength -gt 0 -and $value.Length -gt $MaxLength) {
+        $value = $value.Substring(0, $MaxLength - 3) + '...'
     }
     return $value
 }
@@ -385,6 +196,7 @@ function Get-ObjectPropertyValue {
         return $null
     }
     foreach ($name in $Names) {
+        if ($Object -is [Collections.IDictionary] -and $Object.Contains($name) -and $null -ne $Object[$name]) { return $Object[$name] }
         $property = $Object.PSObject.Properties[$name]
         if ($null -ne $property -and $null -ne $property.Value) {
             return $property.Value
@@ -489,9 +301,19 @@ function Get-PermissionSummary {
     param([object]$Payload)
 
     $toolInput = Get-ObjectPropertyValue -Object $Payload -Names @('tool_input', 'input')
+    foreach ($object in @($Payload, $toolInput)) {
+        $reason = Get-ObjectPropertyValue -Object $object -Names @('justification', 'description', 'reason')
+        if (-not [string]::IsNullOrWhiteSpace([string]$reason)) { return (Protect-PermissionText -Text ([string]$reason) -MaxLength 0) }
+    }
+    $matchedInput = Find-MatchingPermissionInput -Payload $Payload -ToolInput $toolInput
+    if ($matchedInput) {
+        $reason = Get-ObjectPropertyValue -Object $matchedInput -Names @('justification', 'description', 'reason')
+        if (-not [string]::IsNullOrWhiteSpace([string]$reason)) { return (Protect-PermissionText -Text ([string]$reason) -MaxLength 0) }
+    }
     $toolName = [string](Get-ObjectPropertyValue -Object $Payload -Names @('tool_name', 'toolName', 'name'))
     $command = [string](Get-ObjectPropertyValue -Object $toolInput -Names @(
         'command',
+        'cmd',
         'input',
         'patch',
         'patch_text',
@@ -545,6 +367,48 @@ function Get-PermissionSummary {
         $summary = 'Codex is asking for permission.'
     }
     return $summary
+}
+
+function Find-MatchingPermissionInput {
+    param([object]$Payload, [object]$ToolInput)
+    $path = [string]$Payload.transcript_path
+    $turn = [string]$Payload.turn_id
+    $actor = if ($Payload.agent_id) { [string]$Payload.agent_id } else { [string]$Payload.session_id }
+    $name = [string]$Payload.tool_name
+    $command = [string](Get-ObjectPropertyValue -Object $ToolInput -Names @('cmd', 'command', 'input', 'patch', 'text'))
+    if (-not $path -or -not $turn -or -not $actor -or -not $command -or -not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $reader = New-Object IO.StreamReader($path, [Text.Encoding]::UTF8)
+        try { $first = $reader.ReadLine() } finally { $reader.Dispose() }
+        if ($first.Length -gt 1048576) { return $null }
+        $meta = $first | ConvertFrom-Json
+        if ([string]$meta.type -ne 'session_meta' -or [string]$meta.payload.id -ne $actor) { return $null }
+        $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $offset = [Math]::Max(0, $stream.Length - 16777216)
+            $stream.Seek($offset, [IO.SeekOrigin]::Begin) | Out-Null
+            $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+            $text = $reader.ReadToEnd()
+            $reader.Dispose()
+        } finally { $stream.Dispose() }
+        $lines = $text -split "`n"
+        if ($offset -gt 0) { $lines = $lines | Select-Object -Skip 1 }
+        $currentTurn = ''
+        $matched = $null
+        foreach ($line in $lines) {
+            try { $record = $line | ConvertFrom-Json } catch { continue }
+            $item = $record.payload
+            if ([string]$record.type -eq 'turn_context') {
+                $currentTurn = if ($item.turn_id) { [string]$item.turn_id } else { [string]$item.id }
+            }
+            if ([string]$record.type -eq 'event_msg' -and [string]$item.type -eq 'task_started') { $currentTurn = [string]$item.turn_id }
+            if ($currentTurn -ne $turn -or [string]$record.type -ne 'response_item' -or [string]$item.type -ne 'function_call' -or [string]$item.name -ne $name) { continue }
+            try { $arguments = $item.arguments | ConvertFrom-Json } catch { continue }
+            $priorCommand = [string](Get-ObjectPropertyValue -Object $arguments -Names @('cmd', 'command', 'input', 'patch', 'text'))
+            if ($priorCommand -eq $command) { $matched = $arguments }
+        }
+        return $matched
+    } catch { return $null }
 }
 
 function New-CodexPermissionOutput {
@@ -631,13 +495,12 @@ function Invoke-PigPermissionRequest {
         turn_id = $TurnId
         tool_name = Protect-PermissionText -Text $toolName
         summary = Get-PermissionSummary -Payload $Payload
+        agent_id = [string]$Payload.agent_id
+        hook_pid = $PID
+        details = (Protect-PermissionText -Text ($Payload.tool_input | ConvertTo-Json -Depth 12) -MaxLength 0)
     }
 
-    [System.IO.File]::WriteAllText(
-        $requestPath,
-        (($requestBody | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
-        (New-Object System.Text.UTF8Encoding($false))
-    )
+    Write-AtomicJson -Path $requestPath -Value $requestBody
     Write-BridgeStateFile `
         -StateDirectory $StateDirectory `
         -Status 'permission' `
@@ -652,11 +515,11 @@ function Invoke-PigPermissionRequest {
             try {
                 $response = Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $decision = [string]$response.decision
-                if ($decision -eq 'allow' -or $decision -eq 'deny') {
+                if ([string]$response.request_id -eq $requestId -and ($decision -eq 'allow' -or $decision -eq 'deny')) {
                     $message = if ($decision -eq 'deny') { [string]$response.message } else { '' }
                     Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
                     Remove-Item -LiteralPath $responsePath -Force -ErrorAction SilentlyContinue
-                    $nextStatus = if ($decision -eq 'allow') { 'thinking' } else { 'idle' }
+                    $nextStatus = if ($decision -eq 'allow') { 'working' } else { 'idle' }
                     Write-BridgeStateFile `
                         -StateDirectory $StateDirectory `
                         -Status $nextStatus `
@@ -666,6 +529,7 @@ function Invoke-PigPermissionRequest {
                         -Message $message | Out-Null
                     return (New-CodexPermissionOutput -Decision $decision -Message $message)
                 }
+                return (Complete-PermissionNoDecision -StateDirectory $StateDirectory -RequestPath $requestPath -ResponsePath $responsePath -SessionId $SessionId -TurnId $TurnId -Reason 'invalid or mismatched permission response')
             } catch {
                 return (Complete-PermissionNoDecision `
                     -StateDirectory $StateDirectory `
@@ -679,7 +543,7 @@ function Invoke-PigPermissionRequest {
 
         $state = Read-BridgeStateFile -StateDirectory $StateDirectory
         if ($null -ne $state) {
-            if ([string]$state.status -ne 'permission' -or [string]$state.permission_request_id -ne $requestId) {
+            if ([string]$state.event -in @('Interrupt', 'SessionEnd', 'Stop', 'SubagentStop') -or ([string]$state.turn_id -and $TurnId -and [string]$state.turn_id -ne $TurnId)) {
                 return (Complete-PermissionNoDecision `
                     -StateDirectory $StateDirectory `
                     -RequestPath $requestPath `
@@ -748,6 +612,24 @@ if ($SelfTest) {
         throw 'PermissionRequest allow output does not use decision.behavior.'
     }
 
+    $testTranscript = [IO.Path]::GetTempFileName()
+    try {
+        $records = @(
+            [ordered]@{ type = 'session_meta'; payload = @{ id = 'self-test' } },
+            [ordered]@{ type = 'event_msg'; payload = @{ type = 'task_started'; turn_id = 't1' } },
+            [ordered]@{ type = 'response_item'; payload = @{ type = 'function_call'; name = 'exec_command'; arguments = (@{ cmd = 'echo exact'; justification = '同命令的中文理由' } | ConvertTo-Json -Compress) } }
+        )
+        $text = ($records | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }) -join "`n"
+        [IO.File]::WriteAllText($testTranscript, $text, (New-Object Text.UTF8Encoding($false)))
+        $probe = [pscustomobject]@{ session_id = 'self-test'; turn_id = 't1'; transcript_path = $testTranscript; tool_name = 'exec_command'; tool_input = @{ cmd = 'echo exact' } }
+        if ((Get-PermissionSummary -Payload $probe) -ne '同命令的中文理由') { throw 'Matching permission reason recovery failed.' }
+        $probe.tool_input.cmd = 'echo different'
+        if ((Get-PermissionSummary -Payload $probe) -eq '同命令的中文理由') { throw 'Permission reason leaked across different commands.' }
+        $probe.tool_input.cmd = 'echo exact'
+        $probe.turn_id = 't2'
+        if ((Get-PermissionSummary -Payload $probe) -eq '同命令的中文理由') { throw 'Permission reason leaked across turns.' }
+    } finally { [IO.File]::Delete($testTranscript) }
+
     Write-Output 'windows_hook_self_test=ok'
     return
 }
@@ -776,6 +658,8 @@ try {
     } else {
         ''
     }
+    $script:hookPayload = $payload
+    $script:hookActorId = if ($payload.agent_id) { [string]$payload.agent_id } else { $sessionId }
 
     if ($eventName -eq 'PermissionRequest') {
         Write-Output (Invoke-PigPermissionRequest `
@@ -789,9 +673,15 @@ try {
     $status = switch ($eventName) {
         'SessionStart' { 'idle' }
         'UserPromptSubmit' { 'thinking' }
-        'PreToolUse' { 'thinking' }
-        'PostToolUse' { 'thinking' }
+        'PreToolUse' { 'working' }
+        'PostToolUse' { 'working' }
         'Stop' { 'success' }
+        'Interrupt' { 'interrupted' }
+        'PreCompact' { 'compacting' }
+        'PostCompact' { 'success' }
+        'SubagentStart' { 'working' }
+        'SubagentStop' { 'success' }
+        'SessionEnd' { 'idle' }
         default { $null }
     }
 
@@ -826,9 +716,8 @@ try {
             -SessionId $sessionId `
             -TurnId $turnId | Out-Null
 
-        if ($eventName -eq 'UserPromptSubmit') {
-            Start-TaskCompleteWatcher -SessionId $sessionId -TurnId $turnId -StateDirectory $stateDirectory
-        }
+        # The running GUI observes actor-scoped rollout lifecycle events. No
+        # global completion watcher may overwrite another actor's state.
     }
 } catch {
     # Hooks must never interrupt Codex if the decorative bridge cannot update.

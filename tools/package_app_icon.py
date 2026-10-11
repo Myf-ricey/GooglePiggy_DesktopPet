@@ -1,13 +1,12 @@
 """Paste the actual idle sprite onto a simple background; no generated artwork."""
 from pathlib import Path
-import numpy as np
 from PIL import Image, ImageDraw
 
 root = Path(__file__).resolve().parents[1]
 source = root / 'assets/icons/piggy-idle-v2.png'
 target = source.with_suffix('.ico')
-with np.load(root / 'cache/idle.npz') as cache:
-    frame = Image.fromarray(cache['frames'][0])
+with Image.open(root / 'assets/macos-resources/animations/idle/000.png') as image:
+    frame = image.convert('RGBA')
 sprite = frame.crop(frame.getchannel('A').getbbox())
 source.parent.mkdir(parents=True, exist_ok=True)
 sprite.save(source.parent / 'piggy-idle-original.png')

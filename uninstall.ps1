@@ -15,6 +15,15 @@ if ($runKey) {
 
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'GIF Pig Desktop Pet.lnk'
 Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue
+$shortcutName = ([string][char]0x732A) + [char]0x732A + [char]0x684C + [char]0x5BA0 + '.lnk'
+$currentShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) $shortcutName
+if (Test-Path -LiteralPath $currentShortcut) {
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($currentShortcut)
+    if ($link.WorkingDirectory -eq $appDir) {
+        Remove-Item -LiteralPath $currentShortcut -Force
+    }
+}
 
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $hooksPath = Join-Path $codexHome 'hooks.json'
@@ -29,7 +38,7 @@ if (Test-Path -LiteralPath $hooksPath) {
                 $remainingHooks = @(
                     @($group.hooks) | Where-Object {
                         $null -ne $_ -and
-                        [string]$_.command -notlike '*codex-pig-hook.ps1*'
+                        -not ([string]$_.command.Replace('\','/').Contains((Join-Path $appDir 'hooks\codex-pig-hook.ps1').Replace('\','/')))
                     }
                 )
                 if ($remainingHooks.Count -gt 0) {
@@ -45,7 +54,7 @@ if (Test-Path -LiteralPath $hooksPath) {
             }
             $config.hooks.($eventProperty.Name) = @($keptGroups)
         }
-        $temporaryHooksPath = $hooksPath + '.tmp'
+        $temporaryHooksPath = $hooksPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
         $hooksJson = ($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine
         [System.IO.File]::WriteAllText(
             $temporaryHooksPath,

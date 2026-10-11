@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -17,7 +18,42 @@ APP_DATA_DIR_NAME = "GifPigDesktopPet"
 STATUS_FILE_NAME = "codex-status.json"
 HEARTBEAT_FILE_NAME = "pig-heartbeat.json"
 PERMISSION_REQUESTS_DIR_NAME = "permission-requests"
-VALID_STATUSES = {"idle", "thinking", "success", "error", "permission"}
+VALID_STATUSES = {"idle", "thinking", "working", "compacting", "interrupted", "success", "error", "permission"}
+
+
+def atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False) + '\n', encoding='utf-8')
+        for attempt in range(8):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(.01 * (attempt+1))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def actor_path(directory: Path, actor: str) -> Path:
+    name = base64.b64encode(actor.encode('utf-8')).decode('ascii').replace('/', '_')
+    return directory / 'actors' / (name + '.json')
+
+
+def publish_event(directory: Path, payload: dict, legacy_path: Path | None = None) -> Path:
+    payload = dict(payload)
+    payload.setdefault('token', uuid.uuid4().hex)
+    payload.setdefault('updated_at', datetime.now(timezone.utc).isoformat())
+    payload.setdefault('received_at', time.time())
+    actor = payload.get('agent_id') or payload.get('session_id')
+    target = actor_path(directory, actor) if actor else legacy_path or directory / STATUS_FILE_NAME
+    atomic_json(target, payload)
+    if actor:
+        atomic_json(directory / 'family-events' / (f"{int(payload['received_at']*1_000_000):020d}-{uuid.uuid4().hex}.json"), payload)
+    return target
 
 
 def default_status_path() -> Path:
@@ -85,13 +121,7 @@ def write_status(
     }
     if permission_request_id:
         payload["permission_request_id"] = permission_request_id
-    temporary_path = status_path.with_suffix(status_path.suffix + ".tmp")
-    temporary_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary_path, status_path)
-    return status_path
+    return publish_event(status_path.parent, payload, legacy_path=status_path)
 
 
 def main() -> None:

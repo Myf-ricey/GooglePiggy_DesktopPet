@@ -6,10 +6,12 @@ from pathlib import Path
 project_dir = Path(SPECPATH)
 datas = [
     (str(project_dir / "assets"), "assets"),
-    (str(project_dir / "cache"), "cache"),
     (str(project_dir / "hooks"), "hooks"),
     (str(project_dir / "tools"), "tools"),
     (str(project_dir / "README.md"), "."),
+    (str(project_dir / "README-WINDOWS.md"), "."),
+    (str(project_dir / "RELEASE-NOTES-v0.4.2-windows.md"), "."),
+    (str(project_dir / "WINDOWS-0.4-HANDOFF.md"), "."),
     (str(project_dir / "ASSET-NOTICE.md"), "."),
     (str(project_dir / "install.ps1"), "."),
     (str(project_dir / "uninstall.ps1"), "."),
@@ -22,7 +24,7 @@ analysis = Analysis(
     pathex=[str(project_dir)],
     binaries=[],
     datas=datas,
-    hiddenimports=["codex_bridge"],
+    hiddenimports=["codex_bridge", "windows_pet", "family_store", "animation_clock", "codex_observer", "leisure"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
