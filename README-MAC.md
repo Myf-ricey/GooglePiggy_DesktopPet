@@ -15,6 +15,22 @@
 
 `v0.4.0` 是 macOS 新版：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
 
+## main 分支后续修复
+
+- 2026-10-11：过滤 Codex 自动生成“建议下一条用户消息”的内部会话，避免任务栏出现陌生线程编号。与 Windows 0.4.2 使用相同识别条件：明确的应用请求前缀、未登记为正式线程、且不属于子代理。清理先前 SessionStart 空壳，并忽略其后续事件；正常任务和子代理保留。
+- 2026-10-07：移除左拱动画残余灰色地面影子。
+
+以上修复在源码 main 中，旧 `v0.4.0-macos` 下载包不包含这些后续修改。
+
+回归测试（macOS，需要 Xcode Command Line Tools）：
+
+```sh
+swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/suggested-replies/main.swift -o /tmp/googlepiggy-suggested-replies-test
+/tmp/googlepiggy-suggested-replies-test
+```
+
+测试使用临时 Codex 元数据和桌宠状态，覆盖预测请求、迟到事件、重启回放，以及真实线程/子代理不被误过滤。
+
 ## 系统要求
 
 - macOS 13 Ventura 或更高版本；

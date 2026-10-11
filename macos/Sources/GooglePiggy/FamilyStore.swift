@@ -11,6 +11,7 @@ func actorStatusURL(_ id: String) -> URL {
 func familyEventDirectory() -> URL { defaultStateDirectory().appendingPathComponent("family-events") }
 
 struct ThreadMetadata {
+    var registered = false
     var title = ""
     var parent = ""
     var path = ""
@@ -33,7 +34,7 @@ func lookupThreadMetadata(_ id: String) -> ThreadMetadata {
     guard (try? process.run()) != nil else { return ThreadMetadata() }
     let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
     guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let row = rows.first else { return ThreadMetadata() }
-    var result = ThreadMetadata(title: row["title"] as? String ?? "")
+    var result = ThreadMetadata(registered: true, title: row["title"] as? String ?? "")
     result.rollout = row["rollout_path"] as? String ?? ""
     if let source = row["source"] as? String, let bytes = source.data(using: .utf8),
        let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
@@ -73,6 +74,7 @@ final class FamilyStore {
         selectedID = id
         try? writeJSONAtomic(["id": id], to: defaultStateDirectory().appendingPathComponent("selected-family.json"))
     }
+    private var internalSessions = Set<String>()
     private var seen = Set<String>()
     private var initialized = false
     private var rolloutModifications: [String:Date] = [:]
@@ -95,7 +97,23 @@ final class FamilyStore {
         let event = value["event"] as? String ?? ""
         let explicitAgent = value["agent_id"] as? String ?? ""
         let actor = explicitAgent.isEmpty ? session : explicitAgent
-        let meta = nodes[actor] == nil ? lookupThreadMetadata(actor) : ThreadMetadata()
+        // Suggested-reply sessions emit normal hooks, but are not user tasks.
+        // Match Windows: require the explicit app marker, no registered thread,
+        // and no child relationship. A title/UUID alone is never a filter.
+        if internalSessions.contains(actor) { return }
+        let suggestedReply = event == "UserPromptSubmit"
+            && explicitAgent.isEmpty
+            && (value["parent_thread_id"] as? String ?? "").isEmpty
+            && (value["prompt_preview"] as? String ?? "").hasPrefix(
+                "This is an app-generated request for a suggested next user message.")
+        let meta = nodes[actor] == nil || suggestedReply ? lookupThreadMetadata(actor) : ThreadMetadata()
+        if suggestedReply && !meta.registered && (nodes[actor]?.parent ?? "").isEmpty {
+            internalSessions.insert(actor)
+            nodes.removeValue(forKey: actor) // SessionStart may have made a shell.
+            if pendingAutoSelection == actor { pendingAutoSelection = nil }
+            if selectedID == actor { select("") }
+            return
+        }
         let parent = explicitAgent.isEmpty ? meta.parent : session
         if nodes[actor] == nil {
             let fallback = value["thread_title"] as? String ?? value["prompt_preview"] as? String ?? ""
