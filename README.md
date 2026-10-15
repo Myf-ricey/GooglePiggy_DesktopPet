@@ -5,7 +5,7 @@
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
 | Windows 10/11 x64 | **0.4.2** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.4.2-windows/GooglePiggy-0.4.2-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
-| macOS 13+ | **0.4.0** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.4.0-macos) · [macOS 说明](README-MAC.md) |
+| macOS 13+ | **0.5.0** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.0-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
 
@@ -34,7 +34,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## macOS
 
-macOS 保持独立版本与发行包，安装、首次授权及交互说明见 [README-MAC.md](README-MAC.md)。
+macOS 0.5.0 新增启动后台检查与右键检查更新、发光灯泡和更新提示气泡。Mac 保持独立版本与发行包，安装、首次授权及交互说明见 [README-MAC.md](README-MAC.md)。
 
 ## 开发与验证
 

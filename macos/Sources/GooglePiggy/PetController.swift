@@ -233,6 +233,10 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var lastStatusPoll: TimeInterval = 0
     private var lastHeartbeat: TimeInterval = 0
 
+    private let updateChecker = UpdateChecker()
+    private var updateNotice: UpdateNotice?
+    private var updateMouseDown = false
+    private var visibleUpdateNotice: UpdateNotice? { permissionRequest == nil ? updateNotice : nil }
     private var permissionRequest: [String: Any]?
     private var permissionRequestID = ""
     private var permissionButtonDown: String?
@@ -325,7 +329,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private var canHideAtDesktopEdge: Bool {
-        canEnterEdgeHide(mode: mode, bridgeStatus: bridgeStatus, hasPermissionRequest: permissionRequest != nil, hasTransientAnimation: transientKey != nil) && edgePlacement == nil && edgeTransition == nil
+        canEnterEdgeHide(mode: mode, bridgeStatus: bridgeStatus, hasPermissionRequest: permissionRequest != nil || updateNotice != nil, hasTransientAnimation: transientKey != nil) && edgePlacement == nil && edgeTransition == nil
     }
 
     private var currentWorkTokens: Set<String> {
@@ -416,6 +420,11 @@ final class PetController: NSObject, NSApplicationDelegate {
             writeHeartbeat(force: true)
             renderCurrent()
             scheduleCurrent()
+            if let preview = CommandLine.arguments.firstIndex(of: "--preview-update"), CommandLine.arguments.count > preview+1 {
+                let state = CommandLine.arguments[preview+1]
+                let result: UpdateResult = state == "current" ? .current : state == "error" ? .failed : .available(PiggyRelease(version: "0.5.0", notes: "• 新增启动检查与手动检查更新\n• 发光小灯泡，及时告诉你新版消息\n• 优化猪猪的互动体验", url: URL(string: "https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases")!))
+                presentUpdate(result)
+            } else { checkForUpdates(manual: false) }
             if let edge = startupEdgePreview {
                 DispatchQueue.main.async { [weak self] in
                     self?.refreshFamilyState(force: true)
@@ -636,6 +645,7 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     private func currentContentLocalBounds() -> NSRect {
         var result = currentPetLocalBounds()
+        if let notice = visibleUpdateNotice { result = result.union(notice.bounds) }
         if permissionRequest != nil {
             // Include the bubble pointer so an automatic work reveal never
             // leaves an actionable permission prompt behind an edge.
@@ -1019,7 +1029,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var leisureNow: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     private var leisureBlocked: Bool {
-        permissionRequest != nil || dragging || edgePlacement != nil || edgeTransition != nil
+        permissionRequest != nil || updateNotice != nil || dragging || edgePlacement != nil || edgeTransition != nil
             || transientKey != nil || activityRequiresVisiblePet
             || families.nodes.values.contains { $0.active && ["thinking", "working", "compacting", "permission"].contains($0.status) }
     }
@@ -1106,6 +1116,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func renderCurrent() {
+        keepUpdateVisible()
         petView?.needsDisplay = true
     }
 
@@ -1444,7 +1455,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         drawFamilyChildren()
         if permissionRequest != nil {
             drawPermissionBubble()
-        }
+        } else { visibleUpdateNotice?.draw() }
     }
 
     private func refreshFamilyState(force: Bool = false) {
@@ -1491,6 +1502,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         familySelector.panel.setFrameOrigin(origin)
         let mouse = NSEvent.mouseLocation
         let corridor = headScreen.union(familySelector.panel.frame)
+        if visibleUpdateNotice != nil { familySelector.panel.orderOut(nil); return }
         if headScreen.contains(mouse) || (familySelector.panel.isVisible && corridor.contains(mouse)) {
             familyHoverUntil = now+0.4; familySelector.panel.orderFrontRegardless()
         } else if now > familyHoverUntil { familySelector.panel.orderOut(nil) }
@@ -1730,6 +1742,11 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseDown(point: NSPoint) {
+        if let notice = visibleUpdateNotice, notice.bounds.contains(point) {
+            updateMouseDown = true
+            notice.pressed = notice.buttons.first(where: { $0.value.contains(point) })?.key
+            renderCurrent(); return
+        }
         for node in families.children(families.selectedID).prefix(3) {
             if let center = childPositions[node.id], NSRect(x: center.x-45, y: center.y-70, width: 90, height: 76).contains(point), node.status == "permission" {
                 focusedChildID = node.id; bridgeToken = ""; refreshFamilyState(force: true); return
@@ -1783,6 +1800,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseDragged() {
+        if updateMouseDown { return }
         if permissionButtonDown != nil {
             renderCurrent()
             return
@@ -1829,6 +1847,17 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseUp(point: NSPoint) {
+        if updateMouseDown {
+            updateMouseDown = false
+            if let notice = visibleUpdateNotice, let action = notice.pressed, notice.buttons[action]?.contains(point) == true {
+                if action == "update", let release = notice.release {
+                    if NSWorkspace.shared.open(release.url) { updateNotice = nil }
+                    else { updateNotice = UpdateNotice(.failed) }
+                } else { updateNotice = nil }
+            }
+            updateNotice?.pressed = nil
+            renderCurrent(); return
+        }
         if permissionButtonDown != nil || permissionBubbleDown {
             let action = permissionButtonDown
             permissionButtonDown = nil
@@ -1895,6 +1924,35 @@ final class PetController: NSObject, NSApplicationDelegate {
         _ = clearPermissionRequest()
     }
 
+    @objc private func manualUpdateCheck(_ sender: NSMenuItem) { checkForUpdates(manual: true) }
+
+    private func checkForUpdates(manual: Bool) {
+        updateChecker.check(manual: manual) { [weak self] result, requested in
+            guard let self else { return }
+            if case .available = result { self.presentUpdate(result) }
+            else if requested { self.presentUpdate(result) }
+        }
+    }
+
+    private func presentUpdate(_ result: UpdateResult) {
+        updateNotice = UpdateNotice(result)
+        interruptLeisure()
+        familySelector.panel.orderOut(nil)
+        _ = beginEdgeReveal(playRevealAnimation: true)
+        keepUpdateVisible()
+        renderCurrent()
+    }
+
+    private func keepUpdateVisible() {
+        guard visibleUpdateNotice != nil, edgePlacement == nil, edgeTransition == nil, !dragging,
+              let window, let frame = screenBounds(for: currentContentLocalBounds()),
+              let screen = window.screen ?? NSScreen.main else { return }
+        let safe = screen.visibleFrame.insetBy(dx: 12, dy: 12)
+        let dx = frame.minX < safe.minX ? safe.minX-frame.minX : frame.maxX > safe.maxX ? safe.maxX-frame.maxX : 0
+        let dy = frame.minY < safe.minY ? safe.minY-frame.minY : frame.maxY > safe.maxY ? safe.maxY-frame.maxY : 0
+        if dx != 0 || dy != 0 { window.setFrameOrigin(NSPoint(x: window.frame.minX+dx, y: window.frame.minY+dy)) }
+    }
+
     func showContextMenu(at point: NSPoint, in view: NSView) {
         let menu = NSMenu(title: appDisplayName)
         menu.autoenablesItems = false
@@ -1929,6 +1987,10 @@ final class PetController: NSObject, NSApplicationDelegate {
         )
         hookHelp.target = self
         menu.addItem(hookHelp)
+        menu.addItem(.separator())
+        let update = NSMenuItem(title: updateChecker.checking ? "正在检查更新…" : "检查更新…", action: #selector(manualUpdateCheck(_:)), keyEquivalent: "")
+        update.target = self
+        menu.addItem(update)
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: "退出猪猪桌宠",

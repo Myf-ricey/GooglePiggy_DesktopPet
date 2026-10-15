@@ -1,6 +1,6 @@
 # GooglePiggy Desktop Pet for macOS
 
-这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.4.0`。它会陪你
+这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.5.0`。它会陪你
 观察 Codex 的工作状态，也会在空闲时悄悄躲到屏幕边缘：
 
 - 呼吸待机、点击躺平、拖动左拱；
@@ -13,14 +13,16 @@
 - 透明、无边框、置顶，并可显示在所有桌面空间；
 - 便携应用包，运行时不需要 Python、PowerShell 或 Homebrew。
 
-`v0.4.0` 是 macOS 新版：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
+自 `v0.4.0` 起支持：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
 
-## main 分支后续修复
+## v0.5.0 更新
 
-- 2026-10-11：过滤 Codex 自动生成“建议下一条用户消息”的内部会话，避免任务栏出现陌生线程编号。与 Windows 0.4.2 使用相同识别条件：明确的应用请求前缀、未登记为正式线程、且不属于子代理。清理先前 SessionStart 空壳，并忽略其后续事件；正常任务和子代理保留。
-- 2026-10-07：移除左拱动画残余灰色地面影子。
+- 每次启动后台检查 Mac 正式版；右键「检查更新…」也可主动检查。
+- 有新版时，猪头上方显示暖黄色发光灯泡和更新气泡，提供「稍后再说 / 更新」。
+- 手动检查无新版时显示「当前已是最新版本啦！」；后台无新版或网络失败时不打扰。
+- 包含 2026-10-11 的建议回复内部会话过滤修复，以及 2026-10-07 的左拱动画残余灰色地面影子清理。
 
-以上修复在源码 main 中，旧 `v0.4.0-macos` 下载包不包含这些后续修改。
+完整说明见 [macOS 0.5.0 发布说明](RELEASE-NOTES-v0.5.0-macos.md)。
 
 回归测试（macOS，需要 Xcode Command Line Tools）：
 
@@ -34,12 +36,12 @@ swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Source
 ## 系统要求
 
 - macOS 13 Ventura 或更高版本；
-- 优先下载同时支持两类处理器的 `GooglePiggy-macos-universal-v0.4.0`；
+- 优先下载同时支持两类处理器的 `GooglePiggy-macos-universal`；
 - 也可以下载与 Mac 处理器匹配的较小发布包：
   - `GooglePiggy-macos-arm64`：Apple Silicon（M1/M2/M3/M4/M5 等）；
   - `GooglePiggy-macos-x64`：Intel Mac。
 
-下载：[macOS v0.4.0 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.4.0-macos)。
+下载：[macOS v0.5.0 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.0-macos)。
 
 ## 推荐安装
 
@@ -237,3 +239,33 @@ Gatekeeper 信任体验，不影响桌宠功能。
 安装器将旧的 `~/Applications/GooglePiggy.app` 保留到 `~/Applications/GooglePiggy Backups/时间戳/`，新版本使用正式应用路径并接管自启动和 Codex hooks。旧应用不再自动启动。用户状态仍保存在 `~/Library/Application Support/GifPigDesktopPet/`。
 
 正式菜单不再显示动画预览。偷吃采用新版横向像素胡萝卜，包含左右张望、视线高低变化及前半身轻微压缩；睡眠保留打哈欠、趴下回弹、独立 ZZZ 和点击摆尾。
+
+## 检查更新
+
+Mac 版每次启动在后台检查一次正式 macOS Release；没有新版或后台网络失败时不弹窗。
+右键「检查更新…」可主动检查：有新版显示发光灯泡、更新重点、版本变化及
+「稍后再说 / 更新」；没有新版显示「当前已是最新版本啦！」和「收到！」。
+手动检查网络失败会明确提示，不会当作已经是最新版。
+
+「更新」打开对应版本的 GitHub 下载页，由用户下载安装；目前不执行自动覆盖安装。
+「稍后再说」关闭本次提示，下次启动重新检查。真实 Codex 权限对话框优先，更新提示会在权限处理后恢复。
+发布需使用 `v数字版本-macos` 标签、非预发布状态，并附带非空 macOS 安装包；Windows Release 不参与比较。
+Release 正文前三个列表项用于更新重点，建议每项写一句简短的用户可读说明。
+
+开发预览（使用固定演示数据，不代表在线检查结果）：
+
+```sh
+swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-preview/main.swift -o /tmp/googlepiggy-update-preview
+/tmp/googlepiggy-update-preview --live
+```
+
+演示窗口按钮用于切换「发现新版 / 已是最新」两种状态，不下载、不安装。
+预览同时输出 PNG 与动画 GIF 至 `build/update-preview/`。
+完整应用可用 `--preview-update available`、`--preview-update current` 或 `--preview-update error` 预览。
+
+更新逻辑回归：
+
+```sh
+swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-checker/main.swift -o /tmp/googlepiggy-update-test
+/tmp/googlepiggy-update-test
+```

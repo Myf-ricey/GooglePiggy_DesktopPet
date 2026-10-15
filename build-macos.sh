@@ -8,7 +8,7 @@ APP_NAME="GooglePiggy.app"
 APP_DIR="$BUILD_ROOT/$APP_NAME"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 EXECUTABLE_DIR="$APP_DIR/Contents/MacOS"
-VERSION="${VERSION:-0.4.0}"
+VERSION="${VERSION:-0.5.0}"
 MACHINE_ARCH="$(uname -m)"
 BUILD_UNIVERSAL="${BUILD_UNIVERSAL:-1}"
 
@@ -120,6 +120,7 @@ mkdir -p "$RELEASE_DIR"
 /usr/bin/ditto macos/install.command "$RELEASE_DIR/install.command"
 /usr/bin/ditto macos/uninstall.command "$RELEASE_DIR/uninstall.command"
 /usr/bin/ditto README-MAC.md "$RELEASE_DIR/README-MAC.md"
+/usr/bin/ditto "RELEASE-NOTES-v${VERSION}-macos.md" "$RELEASE_DIR/RELEASE-NOTES-v${VERSION}-macos.md"
 chmod 755 "$RELEASE_DIR/install.command" "$RELEASE_DIR/uninstall.command"
 
 if [[ "${ZIP_PACKAGER:-keka}" == "ditto" ]]; then

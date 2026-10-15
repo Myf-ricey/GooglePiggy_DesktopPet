@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - "v*"
+      - "!v*-windows"
 
 permissions:
   contents: write
@@ -36,6 +37,11 @@ jobs:
         run: |
           swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/suggested-replies/main.swift -o /tmp/googlepiggy-suggested-replies-test
           /tmp/googlepiggy-suggested-replies-test
+
+      - name: Test update checking
+        run: |
+          swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-checker/main.swift -o /tmp/googlepiggy-update-test
+          /tmp/googlepiggy-update-test
 
       - name: Build and test native macOS release
         env:

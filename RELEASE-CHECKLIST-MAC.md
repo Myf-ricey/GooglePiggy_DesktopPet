@@ -1,4 +1,4 @@
-# macOS Release Checklist (`v0.4.0`)
+# macOS Release Checklist (`v0.5.0`)
 
 ## 1. Local build
 
@@ -36,7 +36,7 @@ hdiutil verify dist/GooglePiggy-macos-universal.dmg
 For one download that supports all Macs, upload:
 
 ```text
-GooglePiggy-macos-universal-v0.4.0.zip
+GooglePiggy-macos-universal.zip
 GooglePiggy-macos-universal.dmg
 ```
 
@@ -87,15 +87,24 @@ GooglePiggy-macos-x64.dmg
   while hidden and confirm the pet reveals automatically in the correct working state.
 - Publish `README-MAC.md` with the release.
 
-## v0.4.0 regression checks
+## v0.5.0 regression checks
 
 - Run `tools/test_leisure_native.py` after building the app.
 - Compile `tests/leisure/main.swift` with `LeisureRoutine.swift` and run it.
 - Compile `tests/thread-animation/main.swift` with `ThreadAnimationClock.swift` and run it.
 - Verify the context menu has no animation previews.
 - Verify the installed LaunchAgent and Codex hooks reference the production app.
-- Publish the macOS-only tag `v0.4.0-macos`; retain Windows releases.
+- Publish the macOS-only tag `v0.5.0-macos`; retain Windows releases.
 
 Native builds use the checked-in frame resources and must work without `cache/`. The legacy Python `smoke_test.py` belongs to the generated Windows asset pipeline; native release validation runs `--self-test` and `test_macos_release.py`.
 
 Local ZIP builds default to Keka. GitHub-hosted runners explicitly set `ZIP_PACKAGER=ditto` because Keka requires interactive sandbox directory access; CI verifies the ZIP with `unzip -tq`.
+
+## v0.5.0 update checks
+
+- Compile and run `tests/update-checker/main.swift` with `UpdateNotice.swift` (version/platform filtering and mocked network cases).
+- Startup checks silently ignore current versions/network errors; manual checks report either condition.
+- New releases show the approved glowing bulb (30° counterclockwise, 14-point downward adjustment), release highlights and grey/green buttons.
+- Permission requests take precedence over update prompts. Update opens the version-specific release page.
+- Verify bundle version `0.5.0`, build `7`, both universal architectures, ZIP integrity and DMG integrity.
+- Upload `RELEASE-NOTES-v0.5.0-macos.md` and `SHA256SUMS.txt` alongside the ZIP and DMG.
