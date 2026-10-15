@@ -121,11 +121,13 @@ extension PetController {
 '''
 (test/'PetController.swift').write_text(code)
 (test/'main.swift').write_text('import AppKit\nlet app=NSApplication.shared\napp.setActivationPolicy(.accessory)\nlet controller=PetController()\ntry controller.runLeisureIntegrationTests()\n')
-app=out/'Leisure Integration Test.app';shutil.copytree(root/'build/macos/GooglePiggy.app',app,dirs_exist_ok=True)
+app=out/'Leisure Integration Test.app'
+if app.exists(): shutil.rmtree(app)
+subprocess.run(['ditto',str(root/'build/macos/GooglePiggy.app'),str(app)],check=True)
 exe=app/'Contents/MacOS/GooglePiggy'
 files=[p for p in src.glob('*.swift') if p.name not in ['main.swift','PetController.swift']]+[test/'PetController.swift',test/'main.swift']
-subprocess.run(['swiftc','-swift-version','5','-framework','AppKit','-framework','Foundation',*map(str,files),'-o',str(exe)],check=True)
-subprocess.run(['codesign','--force','--deep','--sign','-',str(app)],check=True,capture_output=True)
+subprocess.run(['swiftc','-swift-version','5','-framework','AppKit','-framework','Foundation','-F',str(root/'cache/sparkle-2.10.0'),'-framework','Sparkle','-Xlinker','-rpath','-Xlinker','@executable_path/../Frameworks',*map(str,files),'-o',str(exe)],check=True)
+subprocess.run(['codesign','--force','--sign','-',str(app)],check=True,capture_output=True)
 state=out/'integration-state';state.mkdir(exist_ok=True)
 result=subprocess.run([str(exe)],env=dict(os.environ,GOOGLEPIGGY_STATE_DIR=str(state)),text=True,capture_output=True,timeout=90)
 (out/'integration-test.log').write_text(result.stdout+result.stderr)

@@ -56,6 +56,9 @@ for (name,result) in [("available",UpdateResult.available(demoRelease)),("curren
     view.notice=UpdateNotice(result,current:"0.4.0");view.time=0.4
     try snapshot().representation(using:.png,properties:[:])!.write(to:output.appendingPathComponent(name+".png"))
 }
+view.notice=UpdateNotice(.available(PiggyRelease(version:"0.5.1",notes:"应用内下载安装更新",url:demoRelease.url)),current:"0.5.0")
+view.notice.progressMessage="正在下载新版本… 63%";view.notice.progress=0.63;view.notice.canCancel=true
+try snapshot().representation(using:.png,properties:[:])!.write(to:output.appendingPathComponent("downloading.png"))
 view.notice=UpdateNotice(.available(demoRelease),current:"0.4.0")
 let destination=CGImageDestinationCreateWithURL(output.appendingPathComponent("update-preview.gif") as CFURL,UTType.gif.identifier as CFString,48,nil)!
 CGImageDestinationSetProperties(destination,[kCGImagePropertyGIFDictionary:[kCGImagePropertyGIFLoopCount:0]] as CFDictionary)

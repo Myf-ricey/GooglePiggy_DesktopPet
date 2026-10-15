@@ -18,7 +18,7 @@ final class UpdateChecker {
     private var manualRequested = false
     private let session: URLSession
     init(session: URLSession = .shared) { self.session = session }
-    static let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.0"
+    static let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.1"
     static func version(_ value: String) -> [Int]? {
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
         guard (2...4).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy({ $0.isASCII && $0.isNumber }) }) else { return nil }
@@ -46,7 +46,7 @@ final class UpdateChecker {
             let bullets = raw.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { $0.hasPrefix("- ") || $0.hasPrefix("* ") }.prefix(3)
                 .map { "• " + String($0.dropFirst(2)).replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "") }
-            let notes = bullets.isEmpty ? "新版已发布，点击更新查看完整说明和安装包。" : bullets.joined(separator: "\n")
+            let notes = bullets.isEmpty ? "新版已发布，点击更新即可下载并安装。" : bullets.joined(separator: "\n")
             return PiggyRelease(version: number, notes: String(notes.prefix(180)), url: url)
         }
     }
@@ -91,11 +91,18 @@ final class UpdateNotice {
     let current: String
     let started = ProcessInfo.processInfo.systemUptime
     var pressed: String?
+    var progressMessage: String?
+    var progress: Double?
+    var canCancel = false
+    var installationError: String?
     init(_ result: UpdateResult, current: String = UpdateChecker.currentVersion) { self.result = result; self.current = current }
     var release: PiggyRelease? { if case .available(let release) = result { return release }; return nil }
     var rect: NSRect { NSRect(x: 238, y: release == nil ? 190 : 112, width: 344, height: release == nil ? 146 : 224) }
     var bounds: NSRect { rect.union(NSRect(x: 360, y: 332, width: 100, height: 100)) }
     var buttons: [String: NSRect] {
+        if progressMessage != nil {
+            return canCancel ? ["cancel": NSRect(x: rect.minX+20, y: rect.maxY-52, width: 304, height: 34)] : [:]
+        }
         if release == nil { return ["dismiss": NSRect(x: rect.minX+20, y: rect.maxY-52, width: 304, height: 34)] }
         return ["dismiss": NSRect(x: rect.minX+20, y: rect.maxY-52, width: 142, height: 34),
                 "update": NSRect(x: rect.minX+182, y: rect.maxY-52, width: 142, height: 34)]
@@ -122,9 +129,18 @@ final class UpdateNotice {
         let sides = NSBezierPath(); sides.move(to:NSPoint(x:400,y:rect.maxY)); sides.line(to:NSPoint(x:410,y:rect.maxY+10)); sides.line(to:NSPoint(x:420,y:rect.maxY)); sides.lineWidth=2; sides.stroke()
         text("猪猪桌宠 · 软件更新", NSRect(x:rect.minX+20,y:rect.minY+16,width:304,height:18),11,.medium,rose)
         if let release {
-            text("检测到有新版本 \(release.version)",NSRect(x:rect.minX+20,y:rect.minY+43,width:304,height:24),17,.semibold)
-            text(release.notes,NSRect(x:rect.minX+20,y:rect.minY+78,width:304,height:64),13)
-            text("是否选择更新版本：\(current)→\(release.version)",NSRect(x:rect.minX+20,y:rect.minY+146,width:304,height:20),12,.medium)
+            text(installationError != nil ? "更新未完成" : progressMessage != nil ? "正在更新到 \(release.version)" : "检测到有新版本 \(release.version)",NSRect(x:rect.minX+20,y:rect.minY+43,width:304,height:24),17,.semibold)
+            text(installationError ?? progressMessage ?? release.notes,NSRect(x:rect.minX+20,y:rect.minY+78,width:304,height:64),13)
+            if progressMessage != nil {
+                let bar=NSRect(x:rect.minX+20,y:rect.minY+135,width:304,height:6)
+                NSColor(calibratedWhite:0.85,alpha:1).setFill()
+                NSBezierPath(roundedRect:bar,xRadius:3,yRadius:3).fill()
+                green.setFill()
+                let width=progress.map { CGFloat(min(1,max(0,$0)))*bar.width } ?? 60
+                let offset=progress == nil ? CGFloat((sin(elapsed*2)+1)/2)*(bar.width-width) : 0
+                NSBezierPath(roundedRect:NSRect(x:bar.minX+offset,y:bar.minY,width:width,height:bar.height),xRadius:3,yRadius:3).fill()
+            }
+            text(progressMessage != nil ? "完成后会自动重启，设置和任务数据会保留。" : "是否选择更新版本：\(current)→\(release.version)",NSRect(x:rect.minX+20,y:rect.minY+146,width:304,height:20),12,.medium)
         } else {
             let title: String
             if case .current = result { title = "当前已是最新版本啦！" } else { title = "暂时无法检查更新，请稍后重试" }
@@ -135,7 +151,7 @@ final class UpdateNotice {
             let adjusted = box.offsetBy(dx:0,dy:pressed == action ? 1 : 0)
             (primary ? green : NSColor(calibratedWhite:0.89,alpha:1)).setFill()
             NSBezierPath(roundedRect:adjusted,xRadius:10,yRadius:10).fill()
-            let label = action == "update" ? "更新" : release == nil ? "收到！" : "稍后再说"
+            let label = action == "cancel" ? "取消下载" : action == "update" ? (installationError == nil ? "更新" : "重试") : release == nil ? "收到！" : "稍后再说"
             let attributes: [NSAttributedString.Key:Any] = [.font:NSFont.systemFont(ofSize:13,weight:.semibold),.foregroundColor:primary ? NSColor.white : ink]
             let size = (label as NSString).size(withAttributes:attributes)
             (label as NSString).draw(at:NSPoint(x:adjusted.midX-size.width/2,y:adjusted.midY-size.height/2),withAttributes:attributes)

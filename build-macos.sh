@@ -8,7 +8,7 @@ APP_NAME="GooglePiggy.app"
 APP_DIR="$BUILD_ROOT/$APP_NAME"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 EXECUTABLE_DIR="$APP_DIR/Contents/MacOS"
-VERSION="${VERSION:-0.5.0}"
+VERSION="${VERSION:-0.5.1}"
 MACHINE_ARCH="$(uname -m)"
 BUILD_UNIVERSAL="${BUILD_UNIVERSAL:-1}"
 
@@ -61,8 +61,12 @@ export CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR"
 export SWIFT_MODULE_CACHE_PATH="$MODULE_CACHE_DIR"
 
 cd "$PROJECT_DIR"
+SPARKLE_DIR="$(tools/prepare_sparkle.sh)"
+mkdir -p "$APP_DIR/Contents/Frameworks"
+/usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
 # Approved native frames are versioned so a clean checkout reproduces the release.
 /usr/bin/ditto assets/macos-resources "$RESOURCES_DIR"
+/usr/bin/ditto "$SPARKLE_DIR/LICENSE" "$RESOURCES_DIR/Sparkle-LICENSE.txt"
 # The legacy Python smoke test requires a generated Windows cache.
 # Native resources are checked by --self-test and test_macos_release.py below.
 
@@ -79,6 +83,8 @@ if [[ "$BUILD_UNIVERSAL" == "1" ]]; then
         -target "arm64-apple-macos13.0" \
         -framework AppKit \
         -framework Foundation \
+        -F "$SPARKLE_DIR" -framework Sparkle \
+        -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
         macos/Sources/GooglePiggy/*.swift \
         -o "$BUILD_ROOT/GooglePiggy-arm64"
     /usr/bin/swiftc \
@@ -88,6 +94,8 @@ if [[ "$BUILD_UNIVERSAL" == "1" ]]; then
         -target "x86_64-apple-macos13.0" \
         -framework AppKit \
         -framework Foundation \
+        -F "$SPARKLE_DIR" -framework Sparkle \
+        -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
         macos/Sources/GooglePiggy/*.swift \
         -o "$BUILD_ROOT/GooglePiggy-x86_64"
     /usr/bin/lipo \
@@ -103,12 +111,20 @@ else
         -target "$TARGET_ARCH-apple-macos13.0" \
         -framework AppKit \
         -framework Foundation \
+        -F "$SPARKLE_DIR" -framework Sparkle \
+        -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
         macos/Sources/GooglePiggy/*.swift \
         -o "$EXECUTABLE_DIR/GooglePiggy"
 fi
 
 chmod 755 "$EXECUTABLE_DIR/GooglePiggy"
-/usr/bin/codesign --force --deep --sign - "$APP_DIR"
+# Sign nested helpers inside-out; keep framework links and executable modes intact.
+FRAMEWORK="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+for helper in "$FRAMEWORK/Versions/B/Autoupdate" "$FRAMEWORK/Versions/B/Updater.app" "$FRAMEWORK/Versions/B/XPCServices/"*.xpc; do
+    /usr/bin/codesign --force --sign - "$helper"
+done
+/usr/bin/codesign --force --sign - "$FRAMEWORK"
+/usr/bin/codesign --force --sign - "$APP_DIR"
 
 "$EXECUTABLE_DIR/GooglePiggy" --self-test
 "$BUILD_PYTHON" tools/test_macos_release.py \
@@ -132,7 +148,7 @@ else
         print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
         exit 1
     fi
-    (cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip "$ZIP_PATH" "$RELEASE_NAME")
+    (cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip -snl "$ZIP_PATH" "$RELEASE_NAME")
     "$KEKA_CLI" --cli 7zz t "$ZIP_PATH"
 fi
 

@@ -234,6 +234,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var lastHeartbeat: TimeInterval = 0
 
     private let updateChecker = UpdateChecker()
+    private let updateInstaller = UpdateInstaller()
     private var updateNotice: UpdateNotice?
     private var updateMouseDown = false
     private var visibleUpdateNotice: UpdateNotice? { permissionRequest == nil ? updateNotice : nil }
@@ -394,6 +395,23 @@ final class PetController: NSObject, NSApplicationDelegate {
             try loadResources()
             restartLeisureClock()
             createWindow()
+            updateInstaller.canRelaunch = { [weak self] in
+                guard let self else { return false }
+                return self.permissionRequest == nil && !self.dragging
+                    && !self.families.nodes.values.contains { $0.active && $0.status == "permission" }
+            }
+            updateInstaller.onChange = { [weak self] event in
+                guard let self, let notice = self.updateNotice else { return }
+                switch event {
+                case .working(let message, let progress, let cancel):
+                    notice.progressMessage = message; notice.progress = progress
+                    notice.canCancel = cancel; notice.installationError = nil
+                case .failed(let message):
+                    notice.progressMessage = nil; notice.installationError = message; notice.canCancel = false
+                case .cancelled: self.updateNotice = nil
+                }
+                self.renderCurrent()
+            }
             familySelector.onSelect = { [weak self] id in
                 guard let self else { return }
                 if let node = self.families.nodes[id], node.unread && !node.active {
@@ -1851,9 +1869,9 @@ final class PetController: NSObject, NSApplicationDelegate {
             updateMouseDown = false
             if let notice = visibleUpdateNotice, let action = notice.pressed, notice.buttons[action]?.contains(point) == true {
                 if action == "update", let release = notice.release {
-                    if NSWorkspace.shared.open(release.url) { updateNotice = nil }
-                    else { updateNotice = UpdateNotice(.failed) }
-                } else { updateNotice = nil }
+                    updateInstaller.install(release)
+                } else if action == "cancel" { updateInstaller.cancel() }
+                else { updateNotice = nil }
             }
             updateNotice?.pressed = nil
             renderCurrent(); return
@@ -1927,6 +1945,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     @objc private func manualUpdateCheck(_ sender: NSMenuItem) { checkForUpdates(manual: true) }
 
     private func checkForUpdates(manual: Bool) {
+        guard !updateInstaller.busy else { return }
         updateChecker.check(manual: manual) { [weak self] result, requested in
             guard let self else { return }
             if case .available = result { self.presentUpdate(result) }
@@ -1990,6 +2009,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let update = NSMenuItem(title: updateChecker.checking ? "正在检查更新…" : "检查更新…", action: #selector(manualUpdateCheck(_:)), keyEquivalent: "")
         update.target = self
+        update.isEnabled = !updateInstaller.busy
         menu.addItem(update)
         menu.addItem(.separator())
         let quit = NSMenuItem(

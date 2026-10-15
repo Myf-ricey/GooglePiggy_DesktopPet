@@ -1,4 +1,4 @@
-# macOS Release Checklist (`v0.5.0`)
+# macOS Release Checklist (`v0.5.1`)
 
 ## 1. Local build
 
@@ -94,7 +94,7 @@ GooglePiggy-macos-x64.dmg
 - Compile `tests/thread-animation/main.swift` with `ThreadAnimationClock.swift` and run it.
 - Verify the context menu has no animation previews.
 - Verify the installed LaunchAgent and Codex hooks reference the production app.
-- Publish the macOS-only tag `v0.5.0-macos`; retain Windows releases.
+- Publish the macOS-only tag `v0.5.1-macos`; retain Windows releases.
 
 Native builds use the checked-in frame resources and must work without `cache/`. The legacy Python `smoke_test.py` belongs to the generated Windows asset pipeline; native release validation runs `--self-test` and `test_macos_release.py`.
 
@@ -108,3 +108,12 @@ Local ZIP builds default to Keka. GitHub-hosted runners explicitly set `ZIP_PACK
 - Permission requests take precedence over update prompts. Update opens the version-specific release page.
 - Verify bundle version `0.5.0`, build `7`, both universal architectures, ZIP integrity and DMG integrity.
 - Upload `RELEASE-NOTES-v0.5.0-macos.md` and `SHA256SUMS.txt` alongside the ZIP and DMG.
+
+## v0.5.1 signed installation
+
+- Run `tools/test_update_install.py` using disposable test keys; never use the release key for fixtures.
+- Run `tools/test_leisure_native.py` after building; preserve framework symlinks when copying test bundles.
+- Verify bundle version 0.5.1 / build 8; ZIP must preserve Sparkle symlinks (`Keka -snl`).
+- Build signed app-only archive and appcast with `tools/package_macos_update.sh`; retain the private key in the local Keychain.
+- Upload complete ordinary installers, signed app-only archive, signed appcast and checksums to a draft Release.
+- CI only attaches architecture-specific files to the existing draft. Publish after both architecture jobs pass and all uploads are verified.

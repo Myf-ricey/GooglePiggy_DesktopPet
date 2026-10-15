@@ -1,6 +1,6 @@
 # GooglePiggy Desktop Pet for macOS
 
-这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.5.0`。它会陪你
+这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.5.1`。它会陪你
 观察 Codex 的工作状态，也会在空闲时悄悄躲到屏幕边缘：
 
 - 呼吸待机、点击躺平、拖动左拱；
@@ -14,6 +14,12 @@
 - 便携应用包，运行时不需要 Python、PowerShell 或 Homebrew。
 
 自 `v0.4.0` 起支持：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
+
+## v0.5.1 更新
+
+- 点击「更新」即可在气泡中下载安装，校验通过后备份旧版并覆盖重启。
+- 新增下载进度、取消、失败重试；权限请求未处理完时延后重启。
+- [0.5.1 发布说明](RELEASE-NOTES-v0.5.1-macos.md)。
 
 ## v0.5.0 更新
 
@@ -41,7 +47,7 @@ swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Source
   - `GooglePiggy-macos-arm64`：Apple Silicon（M1/M2/M3/M4/M5 等）；
   - `GooglePiggy-macos-x64`：Intel Mac。
 
-下载：[macOS v0.5.0 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.0-macos)。
+下载：[macOS v0.5.1 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.1-macos)。
 
 ## 推荐安装
 
@@ -247,7 +253,8 @@ Mac 版每次启动在后台检查一次正式 macOS Release；没有新版或�
 「稍后再说 / 更新」；没有新版显示「当前已是最新版本啦！」和「收到！」。
 手动检查网络失败会明确提示，不会当作已经是最新版。
 
-「更新」打开对应版本的 GitHub 下载页，由用户下载安装；目前不执行自动覆盖安装。
+「更新」在应用内下载新版、校验签名、备份旧版并覆盖重启。下载时可以取消，失败后可以重试。
+0.5.0 及更早版本需要手动安装一次 0.5.1，之后才能一键安装后续版本。
 「稍后再说」关闭本次提示，下次启动重新检查。真实 Codex 权限对话框优先，更新提示会在权限处理后恢复。
 发布需使用 `v数字版本-macos` 标签、非预发布状态，并附带非空 macOS 安装包；Windows Release 不参与比较。
 Release 正文前三个列表项用于更新重点，建议每项写一句简短的用户可读说明。
@@ -269,3 +276,15 @@ swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/upda
 swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-checker/main.swift -o /tmp/googlepiggy-update-test
 /tmp/googlepiggy-update-test
 ```
+
+## 一键更新（0.5.1 起）
+
+0.5.1 已接入 Sparkle 2.10.0。点击「更新」后，气泡显示下载和校验进度，
+下载时可以取消；安装前备份旧应用，再退出、原位替换并重启。权限请求未处理完时延后重启。
+失败时保留原版并显示原因，可重试。安装目录须可写，不能从 DMG 或 App Translocation 中更新。
+
+0.5.0 用户需手动安装一次 0.5.1，后续版本才能一键安装。
+签名私钥留在发布者本机钥匙串，账户名 `GooglePiggyDesktopPet`；源码只包含公钥。
+每个 Release 必须额外附带 `appcast.xml` 和 `GooglePiggy-macos-update-版本.zip`，
+由 `tools/package_macos_update.sh` 生成签名清单和只含应用的更新包。
+完整发布顺序及签名说明见 [一键更新发布指南](macos/UPDATE-RELEASE.md)。
