@@ -1,10 +1,10 @@
-# GooglePiggy Windows 0.4.2
+# GooglePiggy Windows 0.5.1
 
 支持 Windows 10/11 x64，便携版无需 Python。本次实机验收环境是 Windows 11 24H2、单屏、150% DPI。
 
 ## 下载与安装
 
-从 [Windows 0.4.2 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.4.2-windows) 下载 `GooglePiggy-0.4.2-windows-x64.zip`，完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。不要只复制 EXE，也不要从压缩包内直接运行。
+从 [Windows 0.5.1 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.1-windows) 下载 `GooglePiggy-0.5.1-windows-x64.zip`。完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。不要只复制 EXE，也不要从压缩包内直接运行。
 
 双击 `pig_pet.exe` 可以先试用。在解压目录打开 PowerShell，运行安装器即可启用完整联动：
 
@@ -49,7 +49,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -NoAutosta
 
 权限气泡只提供“允许一次”和“拒绝”。长内容用鼠标滚轮阅读，读到末尾后才能允许；每次决定只针对当前请求。未通过 `PermissionRequest` Hook 发出的授权提示仍需在 Codex 中处理。
 
-任务列表排除应用生成“下一句建议”的已识别临时会话。子代理属于父任务家庭，不单列成新的家庭。缺少数据库与执行日志确认、且没有工具活动的启动记录，会在 45 秒后退出运行列表。
+任务列表过滤已识别的下一句建议、首页推荐、Claudian 标题生成和专用目录中的 Memory Writing Agent Phase 2。普通聊天和真实子代理保留；子代理归属父任务。缺少数据库与执行日志确认、且没有工具活动的启动记录，会在 45 秒后退出运行列表。程序同时读取 `.jsonl` 与 `.jsonl.zst` 生命周期记录，并对实际活动线程定向查找元数据，避免旧子任务残留；正常长任务不会因静默被统一超时结束。
+
+## 检查更新与一键安装
+
+每次启动后台检查一次 Windows 正式版本；右键“检查更新…”可手动检查。有新版时显示暖黄色灯泡和更新气泡，支持“稍后再说”“更新”、下载进度、取消下载和失败重试。权限气泡优先，拖动或处理权限时延后重启。
+
+只从固定 GitHub 仓库获取 `v*-windows` 正式版本与对应 x64 ZIP。下载后核验 GitHub 附件 SHA-256、包内文件清单和版本，再由独立辅助程序备份整个安装目录、原路径替换和重启。新版启动失败时恢复旧目录。状态数据、其他配置文件、自启动和 Hook 注册路径保留，更新器不重写 Codex 配置。备份位于安装目录同级的 `.backup-…` 目录。
+
+Windows 校验依赖 HTTPS GitHub 发布元数据和 SHA-256；尚未加入发布者独立数字签名。缺少 GitHub 摘要或 Windows 更新清单的包会拒绝自动安装。0.4.2 用户需要先手动安装一次 0.5.1，才能获得后续版本的更新入口。
 
 ## 升级与卸载
 
@@ -75,4 +83,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 
 ## 验收范围
 
-已进行状态／渲染／安装检查、便携 EXE 原生回放，以及多个真实聊天和三个子代理同时工作的用户测试。多显示器与其他物理 DPI 尚未实机验收。详细记录见 [本版验收](releases/windows-0.4.2/ACCEPTANCE.md)。
+本轮测试与证据见 [0.5.1 验收](releases/windows-0.5.1/ACCEPTANCE.md)。本机为 Windows 11、150% DPI、单屏。100/125/200% DPI 与负坐标采用离线渲染／几何测试，其他物理显示器尚未实测。

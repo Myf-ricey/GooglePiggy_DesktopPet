@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "pass_items": [
+    "Frozen isolated GUI starts without network checks",
+    "Native 150% DPI notice stays in monitor work area; captured PNG",
+    "Permission bubble takes priority and defers restart",
+    "Copied helper waits for exact EXE, backs up, replaces, restarts and preserves extra settings",
+    "Real restart failure restores previous EXE and relaunches it"
+  ]
+}

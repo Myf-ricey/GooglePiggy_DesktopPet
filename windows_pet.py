@@ -4,6 +4,8 @@ import ctypes
 import json
 import os
 import time
+import queue
+import threading
 from pathlib import Path
 from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFilter
@@ -13,9 +15,12 @@ from family_store import FamilyStore
 from codex_observer import CodexObserver
 from leisure import Leisure
 from codex_bridge import atomic_json
+from windows_update import Checker, Installer, prepare_helper, Release, validate_tree
+from update_notice import UpdateNotice
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.4.2-windows'
+APP_VERSION = '0.5.1-windows'
+APP_BUILD = '20261017.3-state-audit'
 
 
 @lru_cache(maxsize=4)
@@ -106,6 +111,19 @@ class WindowsPet(win.PigPet):
         self.scale = 1
         self.scaled_once = False
         self.qa_commands = set()
+        if os.environ.get('GOOGLEPIGGY_QA_WINDOW') == '1' and not observe:
+            seen = win.read_json_file(status_path.parent/'qa-consumed.json')
+            self.qa_commands = set(seen.get('ids',[])) if seen else set()
+        self.update_checker = Checker(APP_VERSION.removesuffix('-windows'))
+        self.update_installer = Installer(status_path.parent)
+        self.update_notice = None
+        self.update_down = None
+        self.update_package = None
+        self.update_helper_job = None
+        self.update_helper_started = 0
+        self.update_helper_events = queue.Queue()
+        self.update_startup_done = False
+        self.reduced_motion = False
         super().__init__(animations,report_path,app_dir,status_path)
 
     @property
@@ -118,7 +136,7 @@ class WindowsPet(win.PigPet):
 
     @property
     def activity_requires_visible_pet(self):
-        return bool(self.store.work_tokens()-self.hidden_tokens)
+        return bool(self.permission_request or self.store.work_tokens()-self.hidden_tokens)
 
     def _apply_bridge_payload(self,payload):
         # Legacy events have their own actor, never occupy another task's slot.
@@ -248,6 +266,7 @@ class WindowsPet(win.PigPet):
     def _advance(self):
         self._qa_control()
         self._poll_bridge()
+        self._poll_update()
         self._resolve_visual()
         self._update_hover()
         self._render_current()
@@ -263,6 +282,7 @@ class WindowsPet(win.PigPet):
         if not command or command.get('id') in self.qa_commands:
             return
         self.qa_commands.add(command.get('id'))
+        atomic_json(self.status_path.parent/'qa-consumed.json',{'ids':sorted(self.qa_commands)})
         action = command.get('action')
         if action == 'preview' and command.get('key') in self.animations:
             self._switch_visual(command['key'],once=bool(command.get('once')))
@@ -293,6 +313,20 @@ class WindowsPet(win.PigPet):
             target = self.status_path.parent/'captures'
             target.mkdir(exist_ok=True)
             self.compose().save(target/(str(len(self.qa_commands))+'.png'))
+        elif action == 'update-preview':
+            release = Release('0.5.2','• 更新体验更顺畅\n• 修复后台内部会话误触发','', '', 1, '')
+            self.update_notice = UpdateNotice(release if command.get('kind','available')=='available' else None,
+                'fixture' if command.get('kind')=='failed' else None)
+            self._fit_update_notice()
+        elif action == 'update-dismiss':
+            self._update_action('dismiss')
+        elif action == 'update-install':
+            package = Path(command['package']).resolve()
+            number = command['version']
+            validate_tree(package,number)
+            self.update_notice = UpdateNotice(Release(number,'离线更新验收','','',1,''))
+            self.update_notice.phase = 'ready'
+            self.update_package = package
         elif action == 'exit':
             win.user32.DestroyWindow(self.hwnd)
 
@@ -356,6 +390,8 @@ class WindowsPet(win.PigPet):
             self._composite_selector(canvas)
         if self.permission_request:
             self._composite_permission_bubble(canvas)
+        elif self.update_notice:
+            self.update_notice.draw(canvas,APP_VERSION.removesuffix('-windows'),win.load_ui_font,permission_surface,win.wrap_text_by_width,self.reduced_motion)
         self.last_canvas = canvas
         return canvas
 
@@ -421,6 +457,9 @@ class WindowsPet(win.PigPet):
             self.selector_rows.append((rect,node.id))
 
     def _update_hover(self):
+        if self.update_notice or self.permission_request:
+            self.selector_visible = False
+            return
         point = self._cursor_window_position()
         if point and self.edge_placement is None and not self.dragging:
             hit = self._point_in_rect(point,self._logical_pet_bounds()) or self._point_in_rect(point,self.selector_rect if self.selector_visible else None)
@@ -489,6 +528,8 @@ class WindowsPet(win.PigPet):
         rects = [self._logical_pet_bounds(),(266,505,554,620)]
         if self.permission_request and self.permission_bubble_rect:
             rects.append(self.permission_bubble_rect)
+        elif self.update_notice:
+            rects.append(self.update_notice.bounds)
         return tuple(round(v*self.scale) for v in union(rects))
 
     def _edge_bottom_drop(self,edge,pet_bounds):
@@ -529,6 +570,10 @@ class WindowsPet(win.PigPet):
         point = self._cursor_window_position()
         if self.permission_request and point and self._point_in_rect(point,self.permission_bubble_rect):
             super()._handle_left_button_down()
+            return
+        if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_notice.bounds):
+            self.update_down = next((a for a,r in self.update_notice.buttons.items() if self._point_in_rect(point,r)), 'surface')
+            win.user32.SetCapture(self.hwnd)
             return
         if point:
             for rect,actor in self.selector_rows if self.selector_visible else []:
@@ -573,6 +618,13 @@ class WindowsPet(win.PigPet):
         self._render_current()
 
     def _handle_left_button_up(self):
+        if self.update_down:
+            action,self.update_down = self.update_down,None
+            win.user32.ReleaseCapture()
+            point = self._cursor_window_position()
+            if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_notice.buttons.get(action)):
+                self._update_action(action)
+            return
         if self.selector_down:
             actor,self.selector_down = self.selector_down,None
             point = self._cursor_window_position()
@@ -606,7 +658,7 @@ class WindowsPet(win.PigPet):
         if not owner:
             return
         menu = win.user32.CreatePopupMenu()
-        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(150,'关闭开机自启动' if win.is_autostart_enabled() else '开启开机自启动'),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
+        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(170,'正在检查更新…' if self.update_checker.checking else '检查更新…'),(150,'关闭开机自启动' if win.is_autostart_enabled() else '开启开机自启动'),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
             flags = win.MF_STRING | (1 if command==101 and self.store.work_tokens() else 0)
             win.user32.AppendMenuW(menu,flags,command,label)
         cursor = win.POINT()
@@ -624,6 +676,11 @@ class WindowsPet(win.PigPet):
             win.set_autostart(not win.is_autostart_enabled(),self.app_dir)
         elif command == 160:
             win.user32.MessageBoxW(owner,'首次安装后，请在 Codex /hooks 中审核并信任 GooglePiggy 的 Hook。桌宠不会修改信任数据库。\n权限请求只响应当前请求的允许／拒绝。','GooglePiggy',0)
+        elif command == 170:
+            if self.update_notice and self.update_notice.phase in {'downloading','verifying','ready','installing'}:
+                self._fit_update_notice()
+            else:
+                self.update_checker.check(manual=True)
         elif command == 100:
             self.mode='responsive'
         self._restore_after_menu_dismissal()
@@ -634,11 +691,17 @@ class WindowsPet(win.PigPet):
             return
         self.last_heartbeat = now
         p = dict(app=win.APP_NAME,pid=os.getpid(),updated_at=win.utc_timestamp(),status_path=str(self.status_path),current_key=self.current_key,
-            version=APP_VERSION,frame_index=self.frame_index,selected_family=self.store.selected,
+            version=APP_VERSION,build=APP_BUILD,frame_index=self.frame_index,selected_family=self.store.selected,
             families=[{'id':n.id,'parent':n.parent,'turn':n.turn,'status':n.status,'unread':n.unread} for n in self.store.nodes.values()],
             leisure_phase=self.leisure.phase,selector_visible=self.selector_visible,hidden_work_tokens=sorted(self.hidden_tokens),unread_sync=self.observer.unread_supported,dpi_scale=self.scale,
             presentation=(self.edge_transition or 'hidden') if self.edge_placement else 'visible',
             tail_visible=bool(self.tail_hwnd and win.user32.IsWindowVisible(self.tail_hwnd)))
+        p['update_phase'] = self.update_notice.phase if self.update_notice else None
+        p['update_visible'] = bool(self.update_notice and not self.permission_request)
+        p['update_checking'] = self.update_checker.checking
+        if os.environ.get('GOOGLEPIGGY_QA_WINDOW') == '1' and not self.observer.enabled:
+            p['qa_commands'] = sorted(self.qa_commands)
+            p['permission_request_id'] = self.permission_request_id
         if self.hwnd:
             p.update(hwnd=int(self.hwnd),window_rect=self._window_rect(self.hwnd),window_visible=bool(win.user32.IsWindowVisible(self.hwnd)))
             content = self._screen_bounds_for_local(self._current_content_local_bounds())
@@ -668,3 +731,94 @@ class WindowsPet(win.PigPet):
                 self.selector_scroll=max(0,self.selector_scroll+(-1 if delta>0 else 1))
             return 0
         return super()._wndproc(hwnd,message,wparam,lparam)
+
+    def _fit_update_notice(self):
+        if not self.hwnd or self.dragging or self.edge_transition:
+            return
+        if self.edge_placement:
+            self._begin_edge_reveal(False)
+            return
+        content = self._screen_bounds_for_local(self._current_content_local_bounds())
+        rect = self._window_rect(self.hwnd)
+        monitors = win.enumerate_monitor_infos()
+        if content and rect and monitors:
+            work = max(monitors,key=lambda m:win.rect_intersection_area(content,m.frame)).work
+            dx = max(work[0]-content[0], min(0,work[2]-content[2]))
+            dy = max(work[1]-content[1], min(0,work[3]-content[3]))
+            if dx or dy:
+                self._set_window_origin(self.hwnd,(rect[0]+dx,rect[1]+dy))
+
+    def _update_action(self, action):
+        notice = self.update_notice
+        if not notice or action not in notice.buttons:
+            return
+        if action == 'dismiss':
+            self.update_notice = None
+        elif action == 'cancel':
+            self.update_installer.cancel.set()
+        elif action == 'update' and notice.release:
+            notice.error = None
+            notice.phase,notice.progress = 'downloading',0
+            self.update_installer.start(notice.release)
+
+    def _poll_update(self):
+        if not self.update_startup_done:
+            self.update_startup_done = True
+            # Isolated test instances never contact GitHub or real account data.
+            if self.observer.enabled:
+                self.update_checker.check()
+            enabled = win.wintypes.BOOL(True)
+            if win.user32.SystemParametersInfoW(0x1042,0,ctypes.byref(enabled),0):
+                self.reduced_motion = not bool(enabled.value)
+        result = self.update_checker.poll()
+        if result:
+            release,error,manual = result
+            if (release or manual) and not (self.update_notice and self.update_notice.phase in {'downloading','verifying','ready','installing'}):
+                self.update_notice = UpdateNotice(release,error)
+        while True:
+            try:
+                phase,value = self.update_installer.events.get_nowait()
+            except queue.Empty:
+                break
+            if not self.update_notice:
+                continue
+            self.update_notice.phase = phase
+            if phase == 'downloading': self.update_notice.progress = value
+            elif phase == 'ready': self.update_package = value
+            elif phase == 'error': self.update_notice.error = value
+            elif phase == 'cancelled':
+                self.update_notice.phase,self.update_notice.progress = 'available',None
+        if self.update_package and not self.dragging and not self.mouse_down and not self.permission_actors:
+            package,self.update_package = self.update_package,None
+            self.update_notice.phase = 'installing'
+            self.update_helper_started = time.monotonic()
+            def prepare():
+                try:
+                    job = prepare_helper(self.app_dir,package,self.update_notice.release.version,self.status_path,not self.observer.enabled)
+                    self.update_helper_events.put((job,None))
+                except Exception as error:
+                    self.update_helper_events.put((None,str(error)))
+            threading.Thread(target=prepare,daemon=True).start()
+        try:
+            job,error = self.update_helper_events.get_nowait()
+            if error:
+                self.update_notice.phase,self.update_notice.error = 'error',error
+            else:
+                self.update_helper_job = job
+                self.update_helper_started = time.monotonic()
+        except queue.Empty:
+            pass
+        if self.update_helper_job:
+            result = win.read_json_file(self.update_helper_job.with_name('install-result.json'))
+            if result and not result.get('success'):
+                self.update_notice.phase,self.update_notice.error = 'error',result.get('error','更新未完成')
+                self.update_helper_job = None
+            elif time.monotonic()-self.update_helper_started > 50:
+                atomic_json(self.update_helper_job.with_name('abort.json'),{'abort':True})
+                self.update_notice.phase,self.update_notice.error = 'error','等待安装超时，请重试'
+                self.update_helper_job = None
+            elif self.update_helper_job.with_name('helper-ready.json').exists() and not self.dragging and not self.mouse_down and not self.permission_actors:
+                win.user32.DestroyWindow(self.hwnd)
+                return
+        if self.update_notice and not self.permission_request:
+            self._fit_update_notice()

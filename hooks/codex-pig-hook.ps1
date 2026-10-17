@@ -117,6 +117,10 @@ function Write-BridgeStateFile {
     if ($script:hookPayload.prompt) {
         $preview = [string]$script:hookPayload.prompt
         $state.prompt_preview = $preview.Substring(0, [Math]::Min(100, $preview.Length))
+        $normalizedPrompt = $preview.Replace("`r`n", "`n")
+        if ($normalizedPrompt.StartsWith("User's request:`n" + '"""' + "`n") -and $normalizedPrompt.EndsWith("`n" + '"""' + "`n`nGenerate a title for this conversation:")) {
+            $state.internal_request_kind = 'conversation_title'
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($PermissionRequestId)) {
         $state.permission_request_id = $PermissionRequestId

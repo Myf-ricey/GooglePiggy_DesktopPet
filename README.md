@@ -4,7 +4,7 @@
 
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
-| Windows 10/11 x64 | **0.4.2** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.4.2-windows/GooglePiggy-0.4.2-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
+| Windows 10/11 x64 | **0.5.1** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.1-windows/GooglePiggy-0.5.1-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
 | macOS 13+ | **0.5.2** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.2-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
@@ -16,7 +16,7 @@
 - 空闲时会偷吃、睡觉；右键菜单可进入休息模式、设置自启动或退出。
 - Codex 发出权限请求时显示确认气泡，支持“允许一次”“拒绝”及长内容滚动。
 
-Windows 0.4.2 直接复用 macOS 0.4 的 21 段原始 RGBA 动画；同时修复失效启动记录残留、自动建议会话混入任务列表的问题，并移除权限气泡的“全文”按钮。
+Windows 0.5.1 保留原始 RGBA 动画与多任务家庭，加入启动／手动检查更新、灯泡提示、下载进度与可回滚的原路径更新；扩展后台内部会话过滤，并修复压缩日志和旧任务元数据遗漏导致的小猪持续运行。
 
 ## Windows 快速开始
 
@@ -42,17 +42,18 @@ Windows 源码使用 Python 3.11+，本次在 Python 3.13、Windows 11 x64、150
 
 ```powershell
 py -3 -m pip install -r requirements-dev.txt
-py -3 tools/test_windows_port.py
+py -3 -m unittest tools.test_windows_port tools.test_windows_update tools.test_internal_memory tools.test_compressed_rollout tools.test_state_audit -q
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
 py -3 -m PyInstaller --noconfirm pig_pet.spec
 py -3 tools/test_windows_runtime.py --exe
+py -3 tools/test_state_runtime.py dist/GifPigDesktopPet/pig_pet.exe
 ```
 
 也可运行 `build-release.ps1` 完成 Windows 构建与检查。macOS 构建见 `build-macos.sh` 和 [Mac 发布检查](RELEASE-CHECKLIST-MAC.md)。
 
-Windows 本版标签为 `v0.4.2-windows`，macOS 保持独立标签。本次使用手动 Windows Actions 构建验证；Release 附件使用经过本机回放及解压验证的版本。
+Windows 本版标签为 `v0.5.1-windows`，构建 `20261017.3-state-audit`，macOS 保持独立标签。Windows 已通过 50 项回归、12 项原生回放和 6 项隔离观察器验收；发行附件使用经本机验证的便携程序。
 
-[Windows 0.4.2 发布说明](RELEASE-NOTES-v0.4.2-windows.md) · [Windows 实现与验收](WINDOWS-0.4-HANDOFF.md)
+[Windows 0.5.1 发布说明](RELEASE-NOTES-v0.5.1-windows.md) · [状态复查报告](releases/windows-0.5.1/STATE-AUDIT.md)
 
 ## 许可
 

@@ -6,10 +6,15 @@ import time
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+import io
+import zstandard
 from family_store import FamilyStore
 
 UNCONFIRMED_START_GRACE = 45
-SUGGESTED_REPLY_PREFIX = 'This is an app-generated request for a suggested next user message.'
+INTERNAL_PROMPT_PREFIXES = (
+    'This is an app-generated request for a suggested next user message.',
+    '# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in ',
+)
 
 
 def timestamp(value, fallback=0):
@@ -33,9 +38,62 @@ def unread_ids(value):
     return set(local[0])
 
 
+def rollout_file(path):
+    """Codex retains the original metadata path after archiving as .jsonl.zst."""
+    path = Path(path)
+    if path.suffix == '.zst':
+        return path
+    compressed = Path(str(path)+'.zst')
+    if path.is_file() and (path.stat().st_size or not compressed.is_file()):
+        return path
+    return compressed
+
+
+def lifecycle_in_lines(lines):
+    latest = None
+    for line in lines:
+        try:
+            row = json.loads(line)
+            p = row.get('payload',{})
+            if row.get('type') == 'event_msg' and p.get('type') in {'task_started','task_complete','turn_aborted'} and p.get('turn_id'):
+                when = timestamp(row.get('timestamp'),None)
+                if when is not None and (latest is None or when >= latest[2]):
+                    latest = p['type'], p['turn_id'], when
+        except (ValueError, AttributeError):
+            continue
+    return latest
+
+
+def compressed_lifecycle(path):
+    # Inspect lifecycle rows throughout the bounded archive, retaining no chat
+    # text. Oversized tool-output rows are skipped without unbounded buffering.
+    if path.stat().st_size > 64*1024*1024:
+        return None
+    latest, total, discard = None, 0, False
+    with path.open('rb') as raw, zstandard.ZstdDecompressor(max_window_size=64*1024*1024).stream_reader(raw,read_across_frames=True) as reader:
+        with io.BufferedReader(reader) as stream:
+            while True:
+                line = stream.readline(1024*1024+1)
+                if not line:
+                    break
+                total += len(line)
+                if total > 128*1024*1024:
+                    return None
+                if discard or len(line)>1024*1024:
+                    discard = not line.endswith(b'\n')
+                    continue
+                observed = lifecycle_in_lines([line.decode('utf-8-sig',errors='replace')])
+                if observed and (latest is None or observed[2]>=latest[2]):
+                    latest = observed
+    return latest
+
+
 def latest_lifecycle(path):
     try:
-        with Path(path).open('rb') as stream:
+        path = rollout_file(path)
+        if path.suffix == '.zst':
+            return compressed_lifecycle(path)
+        with path.open('rb') as stream:
             stream.seek(0,2)
             size, span = stream.tell(), 262144
             while True:
@@ -44,18 +102,13 @@ def latest_lifecycle(path):
                 lines = stream.read().decode('utf-8',errors='replace').splitlines()
                 if offset:
                     lines = lines[1:]
-                for line in reversed(lines):
-                    try:
-                        row = json.loads(line)
-                        p = row.get('payload',{})
-                        if row.get('type') == 'event_msg' and p.get('type') in {'task_started','task_complete','turn_aborted'} and p.get('turn_id'):
-                            return p['type'], p['turn_id'], timestamp(row.get('timestamp'))
-                    except (ValueError, AttributeError):
-                        continue
+                observed = lifecycle_in_lines(lines)
+                if observed:
+                    return observed
                 if not offset or span >= 16777216:
                     return None
                 span *= 2
-    except OSError:
+    except (OSError,zstandard.ZstdError):
         return None
 
 
@@ -65,27 +118,45 @@ class CodexObserver:
         self.home = Path(home or os.environ.get('CODEX_HOME') or Path.home()/'.codex')
         self.enabled = enabled
         self.files, self.modifications, self.opened = set(), {}, set()
+        self.log_checked_at, self.log_valid = {}, {}
         self.metadata_at, self.observed_at = 0, 0
         self.metadata = {}
+        self.metadata_lookups = set()
         self.internal_sessions = set()
         self.unread_supported = False
 
-    def refresh_metadata(self, now):
-        if not self.enabled or now-self.metadata_at < 15:
+    def refresh_metadata(self, now, actors=()):
+        if not self.enabled:
             return
-        self.metadata_at = now
-        databases = sorted(self.home.glob('state_*.sqlite'),key=lambda p:p.stat().st_mtime,reverse=True)
-        if not databases:
+        refresh = now-self.metadata_at >= 15
+        requested = {a for a in actors if isinstance(a,str) and a}
+        requested.update(n.id for n in self.store.nodes.values() if n.active)
+        missing = requested - (set() if refresh else self.metadata_lookups)
+        if not refresh and not missing:
             return
+        if refresh:
+            self.metadata_at = now
+            self.metadata_lookups = set()
+        self.metadata_lookups.update(missing)
         try:
-            metadata = {}
+            databases = sorted(self.home.glob('state_*.sqlite'),key=lambda p:p.stat().st_mtime,reverse=True)
+            if not databases:
+                return
+            metadata = {} if refresh else dict(self.metadata)
             with closing(sqlite3.connect(databases[0].as_uri()+'?mode=ro',uri=True,timeout=.2)) as db:
                 cols = {row[1] for row in db.execute('PRAGMA table_info(threads)')}
                 wanted = [c for c in ('id','name','title','source','rollout_path') if c in cols]
                 if 'id' not in cols:
                     return
                 order = ' ORDER BY updated_at DESC' if 'updated_at' in cols else ''
-                rows = db.execute('SELECT '+','.join(wanted)+' FROM threads'+order+' LIMIT 256')
+                query = 'SELECT '+','.join(wanted)+' FROM threads'
+                rows = list(db.execute(query+order+' LIMIT 256')) if refresh else []
+                # Keep recent discovery bounded, but resolve every actor that
+                # actually emitted hooks before classifying it as unregistered.
+                ids = sorted(missing)
+                for offset in range(0,len(ids),128):
+                    batch = ids[offset:offset+128]
+                    rows.extend(db.execute(query+' WHERE id IN ('+','.join('?' for _ in batch)+')',batch))
                 for values in rows:
                     row = dict(zip(wanted,values))
                     parent = ''
@@ -97,6 +168,7 @@ class CodexObserver:
                     metadata[row['id']] = {'thread_title':row.get('name') or row.get('title') or '',
                         'parent_thread_id':parent,'rollout':row.get('rollout_path') or ''}
             self.metadata = metadata
+            self.metadata_lookups.update(metadata)
         except (sqlite3.Error,OSError):
             return
         for actor, meta in self.metadata.items():
@@ -112,11 +184,24 @@ class CodexObserver:
     def ingest(self, value):
         p = dict(value)
         actor = p.get('agent_id') or p.get('session_id')
-        # The app's suggested-reply sessions emit normal hooks but are not
-        # user tasks. Only suppress explicitly marked, unregistered sessions.
-        if (p.get('event') == 'UserPromptSubmit' and actor not in self.metadata and
+        preview = str(p.get('prompt_preview') or '').replace('\r\n', '\n')
+        title_request = (p.get('internal_request_kind') == 'conversation_title' or
+                         (preview.startswith('User\'s request:\n"""\n') and '\n"""\n\nGener' in preview))
+        # Memory consolidation runs in the dedicated memory directory. Require
+        # both the exact instruction header and directory, never a title alone.
+        cwd = str(p.get('cwd') or '').replace('\\', '/').rstrip('/')
+        memory_dir = str(self.home / 'memories').replace('\\', '/').rstrip('/')
+        memory_request = (preview.replace('\r\n', '\n').startswith(
+            '## Memory Writing Agent: Phase 2 (Consolidation)\nYou are a Memory Writing Agent.') and
+            (cwd.casefold() == memory_dir.casefold() or cwd.casefold().endswith('/.codex/memories')))
+        # Suggestions/titles must be unregistered. Memory consolidation can have
+        # a metadata row, but requires both the exact prompt and dedicated cwd.
+        # Preserve explicit and metadata-derived child relationships.
+        if (actor and p.get('event') == 'UserPromptSubmit' and (actor not in self.metadata or memory_request) and
             not p.get('agent_id') and not p.get('parent_thread_id') and
-            str(p.get('prompt_preview') or '').startswith(SUGGESTED_REPLY_PREFIX)):
+            not self.metadata.get(actor, {}).get('parent_thread_id') and
+            not getattr(self.store.nodes.get(actor), 'parent', '') and
+            (memory_request or title_request or preview.startswith(INTERNAL_PROMPT_PREFIXES))):
             self.internal_sessions.add(actor)
             self.store.nodes.pop(actor,None) # SessionStart may already exist.
             if self.store.selected == actor:
@@ -139,17 +224,21 @@ class CodexObserver:
 
     def poll(self, now=None):
         now = time.time() if now is None else now
-        self.refresh_metadata(now)
         directory = self.state_dir/'family-events'
+        pending = []
         for file in sorted(directory.glob('*.json')):
             if file.name in self.files:
                 continue
             try:
                 p = json.loads(file.read_text(encoding='utf-8-sig'))
-                self.ingest(p)
-                self.files.add(file.name)
+                if isinstance(p,dict):
+                    pending.append((file.name,p))
             except (OSError,ValueError,TypeError):
                 pass # Retry partial reads, never mark unreadable events seen.
+        self.refresh_metadata(now,(p.get('agent_id') or p.get('session_id') for _,p in pending))
+        for name,p in pending:
+            self.ingest(p)
+            self.files.add(name)
         if self.enabled and now-self.observed_at >= 1:
             self.observed_at = now
             candidates = dict(self.metadata)
@@ -159,13 +248,19 @@ class CodexObserver:
                 if not path:
                     continue
                 try:
-                    modified = Path(path).stat().st_mtime_ns
+                    actual = rollout_file(path)
+                    info = actual.stat()
+                    modified = (str(actual),info.st_mtime_ns,info.st_size)
                 except OSError:
                     continue
-                if self.modifications.get(actor) == modified:
+                node = self.store.nodes.get(actor)
+                retry = now-self.log_checked_at.get(actor,0) >= 15 and (not self.log_valid.get(actor) or node is not None and node.active)
+                if self.modifications.get(actor) == modified and not retry:
                     continue
                 self.modifications[actor] = modified
+                self.log_checked_at[actor] = now
                 observed = latest_lifecycle(path)
+                self.log_valid[actor] = observed is not None
                 if not observed:
                     continue
                 kind, turn, when = observed
@@ -195,7 +290,7 @@ class CodexObserver:
                 if (node.active and node.status == 'thinking' and
                     node.payload.get('event') == 'UserPromptSubmit' and
                     node.id not in self.metadata and
-                    not (node.rollout and Path(node.rollout).is_file()) and
+                    not (node.rollout and rollout_file(node.rollout).is_file()) and
                     now-node.last_event > UNCONFIRMED_START_GRACE):
                     self.store.expire_unconfirmed_start(node.id,now)
         self.store.reconcile(now)

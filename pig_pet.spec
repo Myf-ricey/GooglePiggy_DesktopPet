@@ -10,7 +10,7 @@ datas = [
     (str(project_dir / "tools"), "tools"),
     (str(project_dir / "README.md"), "."),
     (str(project_dir / "README-WINDOWS.md"), "."),
-    (str(project_dir / "RELEASE-NOTES-v0.4.2-windows.md"), "."),
+    (str(project_dir / "RELEASE-NOTES-v0.5.1-windows.md"), "."),
     (str(project_dir / "WINDOWS-0.4-HANDOFF.md"), "."),
     (str(project_dir / "ASSET-NOTICE.md"), "."),
     (str(project_dir / "install.ps1"), "."),
@@ -24,7 +24,7 @@ analysis = Analysis(
     pathex=[str(project_dir)],
     binaries=[],
     datas=datas,
-    hiddenimports=["codex_bridge", "windows_pet", "family_store", "animation_clock", "codex_observer", "leisure"],
+    hiddenimports=["codex_bridge", "windows_pet", "family_store", "animation_clock", "codex_observer", "leisure", "windows_update", "update_notice"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -32,6 +32,9 @@ analysis = Analysis(
     noarchive=False,
     optimize=0,
 )
+# Development bytecode must not enter the portable payload or its manifest.
+analysis.datas = [entry for entry in analysis.datas
+                 if '__pycache__' not in Path(entry[0]).parts and not entry[0].endswith('.pyc')]
 pyz = PYZ(analysis.pure)
 
 exe = EXE(

@@ -3043,6 +3043,8 @@ def main() -> None:
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--status-file", type=Path)
     parser.add_argument("--qa-only", action="store_true")
+    parser.add_argument("--update-helper", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--update-recover", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--no-codex-observer", action="store_true", help="Isolated event replay without real Codex state")
     parser.add_argument("--qa-window", action="store_true", help="Expose a taskbar window for native GUI automation")
     parser.add_argument(
@@ -3054,10 +3056,30 @@ def main() -> None:
     parser.add_argument("--enable-autostart", action="store_true")
     parser.add_argument("--disable-autostart", action="store_true")
     args = parser.parse_args()
+    if args.update_helper:
+        from windows_update import run_helper
+        run_helper(args.update_helper)
+        return
+    if args.update_recover:
+        from windows_update import run_recovery
+        run_recovery(args.update_recover)
+        return
     if args.qa_window:
         os.environ['GOOGLEPIGGY_QA_WINDOW'] = '1'
 
     app_dir = application_dir()
+    update_start = os.environ.pop('GOOGLEPIGGY_UPDATE_START','')
+    if getattr(sys,'frozen',False) and update_start != str(app_dir.resolve()):
+        from windows_update import journal_path
+        journal = journal_path(app_dir)
+        if journal.exists():
+            try:
+                if json.loads(journal.read_text(encoding='utf-8')).get('phase') == 'prepared':
+                    # Let the independent helper complete/recover the directory
+                    # before loading a GUI from it (also prevents login races).
+                    return
+            except (OSError,ValueError):
+                pass
     qa_dir = app_dir / "qa"
     try:
         status_path = (

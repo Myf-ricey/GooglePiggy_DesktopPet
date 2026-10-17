@@ -1,0 +1,8 @@
+{
+  "active_roots": 1,
+  "active_children": 0,
+  "contradictions": 0,
+  "compressed_logs_above_old_decoder_limit": 236,
+  "cold_poll_seconds": 4.772,
+  "cached_poll_seconds": 0.024
+}

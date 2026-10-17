@@ -242,6 +242,21 @@ class PortTests(unittest.TestCase):
             self.assertEqual([n.id for n in store.roots(112)],['real'])
             self.assertEqual([n.id for n in store.children('real',112)],['child'])
 
+    def test_ambient_suggestions_do_not_become_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = '# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in th'
+            store = FamilyStore()
+            observer = CodexObserver(store, tmp, enabled=False)
+            for i, event in enumerate(('SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'SessionEnd', 'TaskCompleteFallback')):
+                observer.ingest(dict(session_id='ambient', event=event, received_at=100+i,
+                    prompt_preview=marker if event == 'UserPromptSubmit' else ''))
+            self.assertNotIn('ambient', store.nodes)
+            observer.metadata['real'] = {'thread_title': 'User task'}
+            observer.ingest(dict(session_id='real', event='UserPromptSubmit', received_at=110, prompt_preview=marker))
+            self.assertTrue(store.nodes['real'].active)
+            observer.ingest(dict(session_id='quoted', event='UserPromptSubmit', received_at=111, prompt_preview='Explain: ' + marker))
+            self.assertTrue(store.nodes['quoted'].active)
+
     def test_metadata_preserves_explicit_parent(self):
         import sqlite3
         with tempfile.TemporaryDirectory() as tmp:

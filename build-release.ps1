@@ -23,6 +23,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Legacy geometry validation failed.' }
     & $venvPython tools\test_windows_port.py
     if ($LASTEXITCODE -ne 0) { throw 'Windows port validation failed.' }
+    & $venvPython tools\test_internal_memory.py
+    if ($LASTEXITCODE -ne 0) { throw 'Internal session validation failed.' }
+    & $venvPython tools\test_compressed_rollout.py
+    if ($LASTEXITCODE -ne 0) { throw 'Compressed rollout validation failed.' }
+    & $venvPython tools\test_state_audit.py
+    if ($LASTEXITCODE -ne 0) { throw 'State audit validation failed.' }
+    & $venvPython tools\test_windows_update.py
+    if ($LASTEXITCODE -ne 0) { throw 'Windows updater validation failed.' }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks\codex-pig-hook.ps1 -SelfTest
     if ($LASTEXITCODE -ne 0) {
         throw 'Windows Codex hook self-test failed.'
@@ -31,9 +39,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
     & $venvPython tools\test_windows_runtime.py --exe
     if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows runtime validation failed.' }
+    & $venvPython tools\test_state_runtime.py (Join-Path $projectDir 'dist\GifPigDesktopPet\pig_pet.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Frozen state observer validation failed.' }
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
-    $zipPath = Join-Path $projectDir 'dist\GifPigDesktopPet-windows-x64.zip'
+    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.1
+    if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
+    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.1-windows-x64.zip'
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath
     Write-Host "Release: $releaseDir"

@@ -72,6 +72,11 @@ class FamilyStore:
             return False
         if node.status == 'interrupted' and event not in BEGINS | {'PermissionRequest','SessionEnd'}:
             return False
+        if (event == 'PreToolUse' and node.payload.get('event') == 'PostCompact' and
+            now > node.last_event):
+            # Compaction may end while the same turn continues. A fresh tool
+            # start is authoritative; a late tool result alone cannot resume.
+            node.completion = None
         if node.completion is not None and not begins and event in {'PreToolUse','PostToolUse','Stop','SubagentStop','TaskCompleteFallback'}:
             return False
         if node.status == 'compacting' and event in {'PreToolUse','PostToolUse'}:
