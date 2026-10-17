@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.1</string>
+	<string>0.5.2</string>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
@@ -33,7 +33,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUFeedURL</key>
-	<string>https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.1-macos/appcast.xml</string>
+	<string>https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.2-macos/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>MAppxZfMOozVf2rQPhmJ/92OLP/JtvT+8WfW0f5M80c=</string>
 	<key>SUEnableAutomaticChecks</key><false/>

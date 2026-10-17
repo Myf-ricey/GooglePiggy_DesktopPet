@@ -986,7 +986,13 @@ func runCodexHook() {
         for key in ["agent_id", "agent_type", "cwd", "transcript_path", "trigger", "tool_name", "tool_use_id"] {
             if let value = payload[key] { hookMetadata[key] = value }
         }
-        if let prompt = payload["prompt"] as? String { hookMetadata["prompt_preview"] = String(prompt.prefix(100)) }
+        if let prompt = payload["prompt"] as? String {
+            hookMetadata["prompt_preview"] = String(prompt.prefix(100))
+            // Classify before truncation: long requests hide the title suffix.
+            if prompt.hasPrefix("User's request:\n\"\"\"\n") && prompt.hasSuffix("\n\"\"\"\n\nGenerate a title for this conversation:") {
+                hookMetadata["internal_request_kind"] = "conversation_title"
+            }
+        }
         // Continue may start a new turn without UserPromptSubmit. Trust the
         // local lifecycle record, never a late tool completion by itself.
         if agentID.isEmpty, ["PreToolUse", "PostToolUse", "Stop"].contains(event),

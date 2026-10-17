@@ -97,17 +97,31 @@ final class FamilyStore {
         let event = value["event"] as? String ?? ""
         let explicitAgent = value["agent_id"] as? String ?? ""
         let actor = explicitAgent.isEmpty ? session : explicitAgent
-        // Suggested-reply sessions emit normal hooks, but are not user tasks.
-        // Match Windows: require the explicit app marker, no registered thread,
-        // and no child relationship. A title/UUID alone is never a filter.
+        // Suggestions/titles require an explicit app marker and no registered
+        // thread. Memory consolidation additionally requires its dedicated cwd,
+        // and can be registered. Never suppress a real child relationship.
         if internalSessions.contains(actor) { return }
-        let suggestedReply = event == "UserPromptSubmit"
+        let preview = value["prompt_preview"] as? String ?? ""
+        let internalPrefixes = [
+            "This is an app-generated request for a suggested next user message.",
+            "# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in "
+        ]
+        // Older hook logs only kept 100 characters. Accept the observed title
+        // envelope only when its closing quote and instruction are visible.
+        let titleRequest = value["internal_request_kind"] as? String == "conversation_title"
+            || (preview.hasPrefix("User's request:\n\"\"\"\n") && preview.contains("\n\"\"\"\n\nGener"))
+        let cwd = (value["cwd"] as? String ?? "").replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        let memoryDirectory = codexDataHome().appendingPathComponent("memories").path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        let memoryRequest = preview.replacingOccurrences(of: "\r\n", with: "\n").hasPrefix(
+            "## Memory Writing Agent: Phase 2 (Consolidation)\nYou are a Memory Writing Agent.")
+            && (cwd == memoryDirectory || cwd.hasSuffix("/.codex/memories"))
+        let internalPrompt = event == "UserPromptSubmit"
             && explicitAgent.isEmpty
             && (value["parent_thread_id"] as? String ?? "").isEmpty
-            && (value["prompt_preview"] as? String ?? "").hasPrefix(
-                "This is an app-generated request for a suggested next user message.")
-        let meta = nodes[actor] == nil || suggestedReply ? lookupThreadMetadata(actor) : ThreadMetadata()
-        if suggestedReply && !meta.registered && (nodes[actor]?.parent ?? "").isEmpty {
+            && (memoryRequest || titleRequest || internalPrefixes.contains(where: { preview.hasPrefix($0) }))
+        let meta = nodes[actor] == nil || internalPrompt ? lookupThreadMetadata(actor) : ThreadMetadata()
+        if internalPrompt && (!meta.registered || memoryRequest) && meta.parent.isEmpty && (nodes[actor]?.parent ?? "").isEmpty {
             internalSessions.insert(actor)
             nodes.removeValue(forKey: actor) // SessionStart may have made a shell.
             if pendingAutoSelection == actor { pendingAutoSelection = nil }
