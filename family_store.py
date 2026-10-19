@@ -27,6 +27,7 @@ class Node:
     payload: dict = field(default_factory=dict)
     rollout: str = ''
     observation_expired: bool = False
+    turn_started: float = 0
 
 
 class FamilyStore:
@@ -64,6 +65,7 @@ class FamilyStore:
             if node.turn:
                 node.retired.add(node.turn)
             node.turn, node.completion = turn, None
+            node.turn_started = now
         elif turn and node.turn and turn != node.turn:
             return False
         if not node.turn:
@@ -101,7 +103,9 @@ class FamilyStore:
         return True
 
     def children(self, actor, now):
+        parent = self.nodes.get(actor)
         return sorted((n for n in self.nodes.values() if n.parent == actor and
+            not (n.status == 'interrupted' and parent and n.last_event < parent.turn_started) and
             (n.active or n.completion is not None and now-n.completion < 2.84)), key=lambda n:n.created)
 
     def roots(self, now):

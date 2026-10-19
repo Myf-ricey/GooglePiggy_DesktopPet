@@ -4,7 +4,7 @@
 
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
-| Windows 10/11 x64 | **0.5.4** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.4-windows/GooglePiggy-0.5.4-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
+| Windows 10/11 x64 | **0.5.5** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.5-windows/GooglePiggy-0.5.5-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
 | macOS 13+ | **0.5.3** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.3-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
@@ -16,7 +16,7 @@
 - 空闲时会偷吃、睡觉；右键菜单可进入休息模式、设置自启动或退出。
 - Codex 发出权限请求时显示确认气泡，支持“允许一次”“拒绝”及长内容滚动。
 
-Windows 0.5.4 修复所有动作共用的播放、绘制和缓存路径，并把耗时日志读取移出 UI 线程，减少动画卡顿。保留原素材和任务交互。
+Windows 0.5.5 修复更新气泡重绘时按钮无法点击的问题，并在新回合隐藏之前已中断的子任务小猪；保留 0.5.4 的动画性能优化。
 
 ## Windows 快速开始
 
@@ -38,7 +38,7 @@ macOS 0.5.3 修复运行中强制隐藏后提前弹出，并补充建议安全�
 
 ## 版本规划
 
-同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布；平台专属修复允许补丁号暂时不同。本次 Windows 单独发布 **0.5.4** 性能修复，Mac 保持 **0.5.3**。详见 [版本号规则](VERSIONING.md) 和 [Windows 交接](releases/macos-0.5.3/WINDOWS-HANDOFF.md)。
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布；平台专属修复允许补丁号暂时不同。本次 Windows 单独发布 **0.5.5** 性能修复，Mac 保持 **0.5.3**。详见 [版本号规则](VERSIONING.md) 和 [Windows 交接](releases/macos-0.5.3/WINDOWS-HANDOFF.md)。
 
 ## 开发与验证
 
@@ -55,9 +55,9 @@ py -3 tools/test_state_runtime.py dist/GifPigDesktopPet/pig_pet.exe
 
 也可运行 `build-release.ps1` 完成 Windows 构建与检查。macOS 构建见 `build-macos.sh` 和 [Mac 发布检查](RELEASE-CHECKLIST-MAC.md)。
 
-Windows 本版标签为 `v0.5.4-windows`，构建 `20261019.3-animation-release`。各平台更新器只识别本平台发行。
+Windows 本版标签为 `v0.5.5-windows`，构建 `20261019.5-input-release`。各平台更新器只识别本平台发行。
 
-[Windows 0.5.4 发布说明](RELEASE-NOTES-v0.5.4-windows.md) · [验收报告](releases/windows-0.5.4/ACCEPTANCE.md)
+[Windows 0.5.5 发布说明](RELEASE-NOTES-v0.5.5-windows.md) · [验收报告](releases/windows-0.5.5/ACCEPTANCE.md)
 
 ## 许可
 

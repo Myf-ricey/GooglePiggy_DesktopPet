@@ -21,8 +21,8 @@ from update_notice import UpdateNotice
 from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.4-windows'
-APP_BUILD = '20261019.3-animation-release'
+APP_VERSION = '0.5.5-windows'
+APP_BUILD = '20261019.5-input-release'
 
 
 @lru_cache(maxsize=4)
@@ -836,11 +836,16 @@ class WindowsPet(win.PigPet):
                 # Sample the fixed deadline rather than OS delivery jitter.
                 # Otherwise 19.9/20.1ms arrivals alternately repeat and skip
                 # frames of a 20ms clip even when the average cadence is right.
-                self.animation_sample_time = self.animation_timer.acknowledge()
+                self.animation_sample_time = self.animation_timer.sample()
             try:
                 self._advance()
             finally:
                 self.animation_sample_time = None
+                # Keep the one-notification latch set throughout rendering.
+                # Posted messages precede input/WM_TIMER in GetMessage; if a
+                # heavy frame queues its successor, input can starve forever.
+                if self.animation_timer:
+                    self.animation_timer.acknowledge()
             return 0
         if hwnd == self.hwnd and message == win.WM_DESTROY:
             self.observer.close()

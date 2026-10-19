@@ -47,9 +47,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frozen state observer validation failed.' }
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
-    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.4
+    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.5
     if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
-    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.4-windows-x64.zip'
+    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.5-windows-x64.zip'
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath
     Write-Host "Release: $releaseDir"

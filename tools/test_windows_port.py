@@ -23,6 +23,20 @@ CLIPS = load_manifest(ROOT/'assets/macos-resources')
 
 
 class PortTests(unittest.TestCase):
+    def test_animation_dispatch_keeps_latch_until_render_finishes(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from windows_animation_timer import ANIMATION_MESSAGE
+        timer=Mock()
+        timer.sample.return_value=123.0
+        def render():
+            timer.acknowledge.assert_not_called()
+            self.assertEqual(pet.animation_sample_time,123.0)
+        pet=SimpleNamespace(hwnd=1,animation_timer=timer,animation_sample_time=None,_advance=render)
+        WindowsPet._wndproc(pet,1,ANIMATION_MESSAGE,0,0)
+        timer.acknowledge.assert_called_once()
+        self.assertIsNone(pet.animation_sample_time)
+
     def test_unconfirmed_stale_prompt_does_not_leave_ghost_task(self):
         # Real incident: UserPromptSubmit exists, but the actor has no SQLite
         # row, rollout path, tool activity or completion event.

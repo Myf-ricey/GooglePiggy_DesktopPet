@@ -132,6 +132,19 @@ class AnimationPerformanceTests(unittest.TestCase):
             observer.enable_background()
             self.assertIsNone(observer.background)
 
+    def test_new_parent_turn_hides_only_old_interrupted_children(self):
+        store=FamilyStore()
+        store.ingest(dict(session_id='root',event='UserPromptSubmit',turn_id='r1'),1)
+        for child in ['paused','working']:
+            store.ingest(dict(session_id='root',agent_id=child,event='SubagentStart',turn_id='c1'),2)
+        store.ingest(dict(session_id='paused',event='Interrupt',turn_id='c1'),3)
+        self.assertEqual(len(store.children('root',4)),2)
+        store.ingest(dict(session_id='root',event='UserPromptSubmit',turn_id='r2'),10)
+        self.assertEqual([n.id for n in store.children('root',10)],['working'])
+        self.assertEqual(store.nodes['paused'].status,'interrupted')
+        store.ingest(dict(session_id='paused',event='ResumeDetected',turn_id='c2'),11)
+        self.assertEqual(len(store.children('root',12)),2)
+
     def test_unacknowledged_events_are_retried(self):
         from codex_bridge import publish_event
         with tempfile.TemporaryDirectory() as tmp:

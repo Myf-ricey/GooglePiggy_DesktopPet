@@ -1,0 +1,37 @@
+{
+  "native": [
+    "Native cold start, fresh heartbeat, isolated empty state",
+    "12 concurrent PS5.1 hooks preserve all actor files and UTF-8",
+    "Switching actors does not replay reading intro",
+    "Active family + 4 children hides; same-turn tool receipt stays hidden",
+    "New turn stays hidden; tail action reveals whole family",
+    "All four physical edges hide/reveal a family on the native window",
+    "Native interrupt remains question after late tool result",
+    "Native compaction resists late tool receipt",
+    "Concurrent permission IPC returns matched allow/deny and removes request files",
+    "Two simultaneous requests from the same actor keep independent request IDs",
+    "Native rest sequence, independent sleeping tail and two-loop wake",
+    "Native GUI exits without orphan process"
+  ],
+  "state": [
+    "Frozen observer resolves actor beyond 256 and compressed completion beside empty plaintext",
+    "17 MiB compressed fixture decodes with bundled dependency and no Python PATH",
+    "Fresh real-turn start remains active",
+    "Frozen observer filters safety check but retains same text in a project",
+    "Only a fresh tool start resumes after compaction; delayed result cannot",
+    "Restart replay preserves live root without resurrecting finished child",
+    "Explicit final completion clears active family"
+  ],
+  "update": [
+    "Frozen isolated GUI starts without network checks",
+    "Native 150% DPI notice stays in monitor work area; captured PNG",
+    "Permission bubble takes priority and defers restart",
+    "Copied helper waits for exact EXE, backs up, replaces, restarts and preserves extra settings",
+    "Real restart failure restores previous EXE and relaunches it"
+  ],
+  "unit_count": 68,
+  "input_canary": {
+    "canary_callbacks": 96,
+    "max_gap_ms": 93.06390024721622
+  }
+}

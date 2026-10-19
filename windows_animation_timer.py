@@ -40,6 +40,10 @@ class WindowAnimationTimer:
             self.pending = False
             return self.sample_time
 
+    def sample(self):
+        with self.lock:
+            return self.sample_time
+
     def _run(self):
         handles = (wintypes.HANDLE*2)(self.stop,self.timer)
         origin, tick = time.monotonic(),1
