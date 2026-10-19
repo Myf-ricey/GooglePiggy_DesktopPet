@@ -102,6 +102,11 @@ final class FamilyStore {
         // and can be registered. Never suppress a real child relationship.
         if internalSessions.contains(actor) { return }
         let preview = value["prompt_preview"] as? String ?? ""
+        // Observed ambient-suggestion review envelope. Require the dedicated
+        // root cwd and hook source; title availability is never a classifier.
+        let suggestionSafetyReview = value["source"] as? String == "codex-hook"
+            && value["cwd"] as? String == "/"
+            && preview.hasPrefix("You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\n")
         let internalPrefixes = [
             "This is an app-generated request for a suggested next user message.",
             "# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in "
@@ -119,7 +124,7 @@ final class FamilyStore {
         let internalPrompt = event == "UserPromptSubmit"
             && explicitAgent.isEmpty
             && (value["parent_thread_id"] as? String ?? "").isEmpty
-            && (memoryRequest || titleRequest || internalPrefixes.contains(where: { preview.hasPrefix($0) }))
+            && (suggestionSafetyReview || memoryRequest || titleRequest || internalPrefixes.contains(where: { preview.hasPrefix($0) }))
         let meta = nodes[actor] == nil || internalPrompt ? lookupThreadMetadata(actor) : ThreadMetadata()
         if internalPrompt && (!meta.registered || memoryRequest) && meta.parent.isEmpty && (nodes[actor]?.parent ?? "").isEmpty {
             internalSessions.insert(actor)

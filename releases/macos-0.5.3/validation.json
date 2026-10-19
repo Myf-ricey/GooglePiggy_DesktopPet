@@ -1,0 +1,15 @@
+{
+  "version": "0.5.3",
+  "build": 10,
+  "windows_base": "938c40e1253511baeb8b3318ab6d3a75cbff876a",
+  "native_edge_checks": 48,
+  "native_edge_result": "passed",
+  "suggestion_safety": "passed; two sanitized observed envelopes and false-positive controls",
+  "existing_internal_filters": "passed",
+  "update_checker": "12 checks and 6 network cases passed",
+  "release_validation": "macos_release_test=ok",
+  "geometry": "four edges passed",
+  "manual_tail": "passed during local fix validation on 2026-10-18; same controller implementation",
+  "architectures": "x86_64 arm64",
+  "windows_native_tests": "not run; handoff only"
+}

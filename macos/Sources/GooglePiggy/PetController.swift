@@ -253,6 +253,10 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var dragCanPlayFlat = false
 
     private var hiddenWorkTokens = Set<String>()
+    private var hiddenTaskFamily: String?
+    private var hiddenTaskSince = Date.distantPast
+    private var hiddenTaskCelebratingUntil: TimeInterval = 0
+    private var celebrateAfterReveal = false
     private var familyRevealStarted: TimeInterval?
     private var dragAnimationStarted: TimeInterval = 0
     private var edgePlacement: EdgePlacement?
@@ -888,6 +892,10 @@ final class PetController: NSObject, NSApplicationDelegate {
             )
         )
         hiddenWorkTokens = currentWorkTokens
+        hiddenTaskFamily = hiddenWorkTokens.isEmpty ? nil : families.selectedID
+        hiddenTaskSince = Date()
+        hiddenTaskCelebratingUntil = 0
+        celebrateAfterReveal = false
         edgePlacement = placement
         edgeTransition = .hiding
         revealAfterHiding = false
@@ -1019,6 +1027,13 @@ final class PetController: NSObject, NSApplicationDelegate {
             self.edgePlacement = nil
             self.edgeTransition = nil
             self.revealAfterHiding = false
+            if self.celebrateAfterReveal {
+                self.celebrateAfterReveal = false
+                let duration = Double(self.manifest?.animations["jump"]?.frames.reduce(0) { $0 + $1.duration_ms } ?? 2840) / 1000
+                self.hiddenTaskCelebratingUntil = self.leisureNow + duration
+                self.successEffectStarted = self.leisureNow
+                self.switchVisual("jump", once: true)
+            }
             self.renderCurrent()
             self.scheduleCurrent()
             self.writeHeartbeat(force: true)
@@ -1033,6 +1048,22 @@ final class PetController: NSObject, NSApplicationDelegate {
     @discardableResult
     private func revealForActivityIfNeeded() -> Bool {
         guard edgePlacement != nil else { return false }
+        if let family = hiddenTaskFamily {
+            // A manual hide belongs to the task, not its current animation or
+            // current set of children. Only that family's completion releases it.
+            guard edgeTransition != .revealing, !celebrateAfterReveal else { return false }
+            let completed: Bool
+            if let node = families.nodes[family] {
+                completed = node.status == "success"
+                    && (node.completion ?? .distantPast) >= hiddenTaskSince
+                    && !families.children(family).contains(where: { $0.active })
+            } else {
+                completed = family.isEmpty && successEffectStarted != nil
+            }
+            guard completed else { return false }
+            celebrateAfterReveal = true
+            return beginEdgeReveal(playRevealAnimation: false)
+        }
         let current = currentWorkTokens
         let started = !current.subtracting(hiddenWorkTokens).isEmpty
         hiddenWorkTokens = current
@@ -1482,6 +1513,14 @@ final class PetController: NSObject, NSApplicationDelegate {
             familyPollAt = now
             let previousFamily = families.selectedID
             families.poll()
+            // Auto-selection of another running task must not steal the hidden
+            // task's completion or replace its celebration during the reveal.
+            if let family = hiddenTaskFamily, !family.isEmpty,
+               edgePlacement != nil || leisureNow < hiddenTaskCelebratingUntil {
+                if families.selectedID != family { families.select(family) }
+            } else if edgePlacement == nil {
+                hiddenTaskFamily = nil
+            }
             observeNewTasks()
             syncThreadAnimations()
             if families.selectedID != previousFamily {
@@ -1601,6 +1640,9 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleTailClick() {
+        hiddenTaskFamily = nil
+        celebrateAfterReveal = false
+        hiddenTaskCelebratingUntil = 0
         _ = beginEdgeReveal(playRevealAnimation: true)
     }
 
@@ -1957,7 +1999,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         updateNotice = UpdateNotice(result)
         interruptLeisure()
         familySelector.panel.orderOut(nil)
-        _ = beginEdgeReveal(playRevealAnimation: true)
+        if hiddenTaskFamily == nil { _ = beginEdgeReveal(playRevealAnimation: true) }
         keepUpdateVisible()
         renderCurrent()
     }

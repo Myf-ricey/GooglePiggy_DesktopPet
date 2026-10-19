@@ -38,6 +38,11 @@ jobs:
           swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/suggested-replies/main.swift -o /tmp/googlepiggy-suggested-replies-test
           /tmp/googlepiggy-suggested-replies-test
 
+      - name: Test suggestion safety review filtering
+        run: |
+          swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/suggestion-safety/main.swift -o /tmp/googlepiggy-safety-test
+          /tmp/googlepiggy-safety-test
+
       - name: Test update checking
         run: |
           swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-checker/main.swift -o /tmp/googlepiggy-update-test

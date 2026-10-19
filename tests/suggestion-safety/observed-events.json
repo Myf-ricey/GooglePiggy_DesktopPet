@@ -1,0 +1,84 @@
+[
+  {
+    "session_id": "observed-safety-a",
+    "event": "SessionStart",
+    "status": "idle",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "",
+    "token": "observed-safety-a0",
+    "received_at": 100
+  },
+  {
+    "session_id": "observed-safety-a",
+    "event": "UserPromptSubmit",
+    "status": "thinking",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "t1",
+    "token": "observed-safety-a1",
+    "received_at": 101,
+    "prompt_preview": "You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\nI wil"
+  },
+  {
+    "session_id": "observed-safety-a",
+    "event": "Stop",
+    "status": "success",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "t1",
+    "token": "observed-safety-a2",
+    "received_at": 102
+  },
+  {
+    "session_id": "observed-safety-a",
+    "event": "SessionEnd",
+    "status": "idle",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "",
+    "token": "observed-safety-a3",
+    "received_at": 103
+  },
+  {
+    "session_id": "observed-safety-b",
+    "event": "SessionStart",
+    "status": "idle",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "",
+    "token": "observed-safety-b0",
+    "received_at": 100
+  },
+  {
+    "session_id": "observed-safety-b",
+    "event": "UserPromptSubmit",
+    "status": "thinking",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "t1",
+    "token": "observed-safety-b1",
+    "received_at": 101,
+    "prompt_preview": "You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\nI wil"
+  },
+  {
+    "session_id": "observed-safety-b",
+    "event": "Stop",
+    "status": "success",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "t1",
+    "token": "observed-safety-b2",
+    "received_at": 102
+  },
+  {
+    "session_id": "observed-safety-b",
+    "event": "SessionEnd",
+    "status": "idle",
+    "source": "codex-hook",
+    "cwd": "/",
+    "turn_id": "",
+    "token": "observed-safety-b3",
+    "received_at": 103
+  }
+]

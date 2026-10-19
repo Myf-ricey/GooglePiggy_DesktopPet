@@ -329,7 +329,9 @@ def main() -> None:
             controller_source.index("private func revealForActivityIfNeeded")
         ]
         assert edge_transition_source.count('switchVisual("edge_reveal"') == 2
-        assert 'switchVisual("jump"' not in edge_transition_source
+        # Completion-triggered reveals now intentionally replay a full jump.
+        # Behavioral coverage lives in test_hidden_task_completion.py; a blanket
+        # source ban would reject the intended completion celebration.
         assert "func canEnterEdgeHide(" in edge_hiding_source
         assert "func touchedDesktopEdge(" in edge_hiding_source
         assert "static let revealClearance" in edge_hiding_source
