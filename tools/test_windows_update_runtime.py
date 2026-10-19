@@ -31,7 +31,8 @@ def main():
     old=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else candidate
     from windows_pet import APP_VERSION
     version=APP_VERSION.removesuffix('-windows')
-    old_version='0.5.1' if old != candidate else version
+    old_manifest=read(old/'windows-update.json')
+    old_version=old_manifest.get('version',version)
     root=ROOT/'qa/update-native'/('中文 空格 '+uuid.uuid4().hex)
     root.mkdir(parents=True)
     target=root/'安装目录'; shutil.copytree(old,target)

@@ -25,6 +25,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Handoff validation failed.' }
     & $venvPython tools\test_windows_port.py
     if ($LASTEXITCODE -ne 0) { throw 'Windows port validation failed.' }
+    & $venvPython tools\test_animation_performance.py
+    if ($LASTEXITCODE -ne 0) { throw 'Animation pixel, clock and observer validation failed.' }
     & $venvPython tools\test_internal_memory.py
     if ($LASTEXITCODE -ne 0) { throw 'Internal session validation failed.' }
     & $venvPython tools\test_compressed_rollout.py
@@ -45,9 +47,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frozen state observer validation failed.' }
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
-    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.3
+    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.4
     if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
-    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.3-windows-x64.zip'
+    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.4-windows-x64.zip'
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath
     Write-Host "Release: $releaseDir"

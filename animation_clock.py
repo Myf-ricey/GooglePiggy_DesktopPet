@@ -10,28 +10,68 @@ from PIL import Image
 
 
 class Frames:
-    # PNGs are decoded on demand: the complete export would occupy >3 GiB.
-    def __init__(self, root, specs):
+    # Keep a small expanded hot set and a shared bounded cache of decoded crops.
+    # Full 640x640 exports would otherwise occupy >3 GiB. The former 8-frame
+    # cache alone reread/redecoded every frame on every loop.
+    def __init__(self, root, specs, decoded=None):
         self.root, self.specs = root, specs
         self.cache = OrderedDict()
+        self.decoded = decoded if decoded is not None else DecodedFrames()
 
     def __len__(self):
         return len(self.specs)
 
     def __getitem__(self, index):
         if index not in self.cache:
-            with Image.open(self.root / self.specs[index]['file']) as image:
-                self.cache[index] = image.convert('RGBA')
+            key = (id(self),index)
+            packed = self.decoded.get(key)
+            if packed is None:
+                with Image.open(self.root / self.specs[index]['file']) as image:
+                    frame = image.convert('RGBA')
+                # Preserve even RGB under alpha=0, so returned pixels are exact.
+                bounds = frame.getbbox(alpha_only=False) or (0,0,1,1)
+                packed = (frame.size,bounds,frame.crop(bounds))
+                self.decoded.put(key,packed)
+            else:
+                size,bounds,crop = packed
+                frame = Image.new('RGBA',size)
+                frame.paste(crop,bounds[:2])
+            self.cache[index] = frame
         self.cache.move_to_end(index)
         while len(self.cache) > 8:
             self.cache.popitem(last=False)
         return self.cache[index]
 
 
+class DecodedFrames:
+    def __init__(self, budget=64*1024*1024):
+        self.budget, self.used = budget,0
+        self.items = OrderedDict()
+
+    def get(self, key):
+        value = self.items.get(key)
+        if value is not None:
+            self.items.move_to_end(key)
+        return value
+
+    def put(self, key, value):
+        size = value[2].width*value[2].height*4
+        if size > self.budget:
+            return
+        if key in self.items:
+            old = self.items.pop(key)[2]
+            self.used -= old.width*old.height*4
+        while self.used+size > self.budget:
+            old = self.items.popitem(last=False)[1][2]
+            self.used -= old.width*old.height*4
+        self.items[key] = value
+        self.used += size
+
+
 class Clip:
-    def __init__(self, root, key, spec):
+    def __init__(self, root, key, spec, decoded=None):
         self.key, self.label, self.source = key, spec['label'], root
-        self.frames = Frames(root, spec['frames'])
+        self.frames = Frames(root, spec['frames'],decoded)
         self.durations = [f['duration_ms'] for f in spec['frames']]
         self.source_indices = list(range(len(self.frames)))
         self.loop_start = spec.get('loop_start', 0)
@@ -58,7 +98,8 @@ def load_manifest(root: Path):
     data = json.loads((root / 'animation-manifest.json').read_text(encoding='utf-8'))
     if data['format_version'] != 1 or data['window_size'] != 640:
         raise ValueError('Unsupported animation manifest')
-    return {key: Clip(root, key, spec) for key, spec in data['animations'].items()}
+    decoded = DecodedFrames()
+    return {key: Clip(root, key, spec,decoded) for key, spec in data['animations'].items()}
 
 
 @dataclass

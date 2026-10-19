@@ -6,6 +6,7 @@ import os
 import time
 import queue
 import threading
+import math
 from pathlib import Path
 from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFilter
@@ -17,10 +18,11 @@ from leisure import Leisure
 from codex_bridge import atomic_json
 from windows_update import Checker, Installer, prepare_helper, Release, validate_tree
 from update_notice import UpdateNotice
+from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.3-windows'
-APP_BUILD = '20261019.1-hidden-family'
+APP_VERSION = '0.5.4-windows'
+APP_BUILD = '20261019.3-animation-release'
 
 
 @lru_cache(maxsize=4)
@@ -57,6 +59,30 @@ def resize_alpha(image, size):
     return image.convert('RGBa').resize(size,Image.Resampling.BILINEAR).convert('RGBA')
 
 
+def scaled_frame_bytes(canvas, size):
+    """Same bilinear pixels, without filtering the mostly transparent window.
+
+    Align crop edges to the source/destination pixel grid and include the
+    filter's transparent border, so crop resizing retains the full image phase.
+    """
+    bounds = canvas.getbbox()
+    if bounds is None:
+        return bytes(size[0]*size[1]*4)
+    gx,gy = (n//math.gcd(n,d) for n,d in zip(canvas.size,size))
+    if gx > 16 or gy > 16:
+        return win.premultiplied_bgra(resize_alpha(canvas,size))
+    left,top,right,bottom = bounds
+    left,top = max(0,(left-2)//gx*gx),max(0,(top-2)//gy*gy)
+    right = min(canvas.width,((right+2+gx-1)//gx)*gx)
+    bottom = min(canvas.height,((bottom+2+gy-1)//gy)*gy)
+    dest = (left*size[0]//canvas.width,top*size[1]//canvas.height,
+        right*size[0]//canvas.width,bottom*size[1]//canvas.height)
+    sprite = resize_alpha(canvas.crop((left,top,right,bottom)),(dest[2]-dest[0],dest[3]-dest[1]))
+    result = Image.new('RGBa',size)
+    result.paste(sprite.convert('RGBa'),dest[:2])
+    return result.tobytes('raw','BGRa')
+
+
 def family_tail_rects(edge, main, screen, count, scale=1):
     rects = [main]
     vertical = edge in ('left','right')
@@ -87,6 +113,8 @@ class WindowsPet(win.PigPet):
     def __init__(self, animations, report_path, app_dir, status_path, observe=True):
         self.store = FamilyStore()
         self.observer = CodexObserver(self.store,status_path.parent,enabled=observe)
+        if observe:
+            self.observer.enable_background()
         self.clock = AnimationClock(animations)
         self.leisure = Leisure(time.monotonic())
         self.position = ('idle',0)
@@ -115,6 +143,9 @@ class WindowsPet(win.PigPet):
         self.last_family_poll = 0
         self.scale = 1
         self.scaled_once = False
+        self.animation_timer_started = False
+        self.animation_timer = None
+        self.animation_sample_time = None
         self.qa_commands = set()
         if os.environ.get('GOOGLEPIGGY_QA_WINDOW') == '1' and not observe:
             seen = win.read_json_file(status_path.parent/'qa-consumed.json')
@@ -270,7 +301,8 @@ class WindowsPet(win.PigPet):
         self.bridge_status = node.status if node else 'idle'
 
     def _resolve_visual(self):
-        now, wall = time.monotonic(),time.time()
+        now = self.animation_sample_time if self.animation_sample_time is not None else time.monotonic()
+        wall = time.time()
         if self.dragging:
             self.position = ('left',self.animations['left'].frame(now-self.visual_epoch))
         elif self.transient_key:
@@ -363,11 +395,17 @@ class WindowsPet(win.PigPet):
             win.user32.DestroyWindow(self.hwnd)
 
     def _schedule_current(self):
-        if self.hwnd:
-            win.user32.SetTimer(self.hwnd,self.timer_id,20,None)
+        if self.hwnd and not self.animation_timer_started:
+            try:
+                self.animation_timer = WindowAnimationTimer(self.hwnd)
+            except OSError:
+                # Older Windows builds retain a periodic fallback, never reset
+                # after rendering (which would add render time to every period).
+                win.user32.SetTimer(self.hwnd,self.timer_id,20,None)
+            self.animation_timer_started = True
 
     def compose(self,key=None,index=None):
-        now = time.monotonic()
+        now = self.animation_sample_time if self.animation_sample_time is not None else time.monotonic()
         key, index = (key,index) if key is not None else self.position
         canvas = self.animations[key].frames[index].copy()
         if key == 'left' and self.dragging and self.drag_direction > 0:
@@ -431,6 +469,14 @@ class WindowsPet(win.PigPet):
     def _frame_bytes(self,key,index):
         return win.premultiplied_bgra(self.compose(key,index))
 
+    def _render_current(self):
+        if self.hwnd is None:
+            return
+        self.compose(self.current_key,self.frame_index)
+        # Convert only the final DPI-sized image. The old path converted the
+        # 640px canvas and then discarded those bytes at non-100% DPI.
+        self._render_layered_window(self.hwnd,None,640,640)
+
     def run(self):
         # Per-monitor awareness must precede the first HWND. Coordinates passed
         # to Win32 stay physical; rendering and hit testing use 640-point units.
@@ -452,7 +498,9 @@ class WindowsPet(win.PigPet):
             # compose() is straight-alpha; feed exactly one premultiplication.
             if self.scale != 1 and self.last_canvas is not None:
                 width,height = round(width*self.scale),round(height*self.scale)
-                pixels = win.premultiplied_bgra(resize_alpha(self.last_canvas,(width,height)))
+                pixels = scaled_frame_bytes(self.last_canvas,(width,height))
+            elif pixels is None:
+                pixels = win.premultiplied_bgra(self.last_canvas)
             if not self.scaled_once:
                 rect = self._window_rect(hwnd)
                 if rect:
@@ -783,6 +831,22 @@ class WindowsPet(win.PigPet):
             pass
 
     def _wndproc(self,hwnd,message,wparam,lparam):
+        if hwnd == self.hwnd and message == ANIMATION_MESSAGE:
+            if self.animation_timer:
+                # Sample the fixed deadline rather than OS delivery jitter.
+                # Otherwise 19.9/20.1ms arrivals alternately repeat and skip
+                # frames of a 20ms clip even when the average cadence is right.
+                self.animation_sample_time = self.animation_timer.acknowledge()
+            try:
+                self._advance()
+            finally:
+                self.animation_sample_time = None
+            return 0
+        if hwnd == self.hwnd and message == win.WM_DESTROY:
+            self.observer.close()
+            if self.animation_timer:
+                self.animation_timer.close()
+                self.animation_timer = None
         if hwnd==self.hwnd and message==0x020A: # WM_MOUSEWHEEL
             delta = ctypes.c_short((wparam>>16)&0xffff).value
             point = self._cursor_window_position()

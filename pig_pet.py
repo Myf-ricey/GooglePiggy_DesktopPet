@@ -1493,15 +1493,9 @@ def load_animation_cache(
 
 
 def premultiplied_bgra(canvas: Image.Image) -> bytes:
-    rgba = np.asarray(canvas.convert("RGBA"), dtype=np.uint16)
-    alpha = rgba[:, :, 3:4]
-    premultiplied = (rgba[:, :, :3] * alpha + 127) // 255
-    bgra = np.empty((rgba.shape[0], rgba.shape[1], 4), dtype=np.uint8)
-    bgra[:, :, 0] = premultiplied[:, :, 2]
-    bgra[:, :, 1] = premultiplied[:, :, 1]
-    bgra[:, :, 2] = premultiplied[:, :, 0]
-    bgra[:, :, 3] = rgba[:, :, 3]
-    return bgra.tobytes()
+    # Pillow's native loop has the same round-to-nearest alpha multiplication,
+    # without allocating several uint16 arrays on every UI refresh.
+    return canvas.convert("RGBA").convert("RGBa").tobytes("raw", "BGRa")
 
 
 def utc_timestamp() -> str:
@@ -3090,6 +3084,9 @@ def main() -> None:
     parser.add_argument("--update-recover", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--no-codex-observer", action="store_true", help="Isolated event replay without real Codex state")
     parser.add_argument("--qa-window", action="store_true", help="Expose a taskbar window for native GUI automation")
+    parser.add_argument("--animation-profile", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--profile-seconds", type=float, default=24, help=argparse.SUPPRESS)
+    parser.add_argument("--profile-clips", nargs='+', default=['idle','carrot','reading'], help=argparse.SUPPRESS)
     parser.add_argument(
         "--bridge-event",
         choices=["idle", "thinking", "working", "compacting", "interrupted", "success", "error", "permission"],
@@ -3111,6 +3108,14 @@ def main() -> None:
         os.environ['GOOGLEPIGGY_QA_WINDOW'] = '1'
 
     app_dir = application_dir()
+    if args.animation_profile:
+        if not args.qa_window or not args.status_file:
+            parser.error('--animation-profile requires --qa-window and an isolated --status-file')
+        from tools.profile_windows_animation import main as profile_animation
+        profile_animation(['--assets',str(app_dir),'--code-root',str(app_dir),
+            '--out',str(args.status_file.resolve().parent),'--seconds',str(args.profile_seconds),
+            '--clips',*args.profile_clips]+([] if args.no_codex_observer else ['--observe']))
+        return
     update_start = os.environ.pop('GOOGLEPIGGY_UPDATE_START','')
     if getattr(sys,'frozen',False) and update_start != str(app_dir.resolve()):
         from windows_update import journal_path

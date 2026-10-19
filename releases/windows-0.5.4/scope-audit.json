@@ -1,0 +1,23 @@
+{
+  "family_store.py": true,
+  "leisure.py": true,
+  "codex_bridge.py": true,
+  "hooks/codex-pig-hook.ps1": true,
+  "install.ps1": true,
+  "uninstall.ps1": true,
+  "windows_update.py": true,
+  "update_notice.py": true,
+  "codex_observer.py:CodexObserver.ingest": true,
+  "codex_observer.py:CodexObserver.refresh_metadata": true,
+  "codex_observer.py:latest_lifecycle": true,
+  "codex_observer.py:compressed_lifecycle": true,
+  "codex_observer.py:lifecycle_in_lines": true,
+  "codex_observer.py:unread_ids": true,
+  "windows_pet.py:WindowsPet._sync_family_permission": true,
+  "windows_pet.py:WindowsPet._poll_bridge": true,
+  "windows_pet.py:WindowsPet._update_action": true,
+  "windows_pet.py:WindowsPet._poll_update": true,
+  "pig_pet.py:configure_first_autostart": true,
+  "pig_pet.py:set_autostart": true,
+  "pig_pet.py:is_autostart_enabled": true
+}

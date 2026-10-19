@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 import io
 import zstandard
+import queue
+import threading
 from family_store import FamilyStore
 
 UNCONFIRMED_START_GRACE = 45
@@ -124,6 +126,70 @@ class CodexObserver:
         self.metadata_lookups = set()
         self.internal_sessions = set()
         self.unread_supported = False
+        self.background = None
+
+    def enable_background(self):
+        if self.enabled and self.background is None:
+            self.background = ObserverReader(self.home,self.state_dir)
+
+    def close(self):
+        if self.background:
+            self.background.close()
+
+    def _apply_lifecycle(self, actor, observed, now):
+        if not observed:
+            return
+        kind, turn, when = observed
+        node = self.store.nodes.get(actor)
+        if node is None and (kind != 'task_started' or now-when > 600):
+            return
+        if node and when <= node.last_event:
+            return
+        event = {'task_started':'ResumeDetected','task_complete':'TaskCompleteFallback','turn_aborted':'Interrupt'}[kind]
+        if node and event == 'ResumeDetected' and node.turn == turn and node.status != 'interrupted':
+            return
+        if node and node.turn != turn and event != 'ResumeDetected':
+            self.ingest({'session_id':actor,'event':'ResumeDetected','status':'working','turn_id':turn,'received_at':when-.001,'token':'observed-start-'+actor+turn})
+        self.ingest({'session_id':actor,'event':event,'status':{'ResumeDetected':'working','Interrupt':'interrupted','TaskCompleteFallback':'success'}[event],
+            'turn_id':turn,'received_at':when,'token':'observed-'+actor+kind+turn})
+
+    def _poll_background(self, now):
+        batch = self.background.take()
+        if batch is not None and 'error' not in batch:
+            self.metadata = {actor:dict(meta) for actor,meta in batch['metadata'].items()}
+            for actor,meta in self.metadata.items():
+                node = self.store.nodes.get(actor)
+                if node:
+                    if node.last_event > batch.get('node_versions',{}).get(actor,float('-inf')):
+                        # Hooks applied after this I/O request have priority.
+                        meta.update(thread_title=node.title,parent_thread_id=node.parent,rollout=node.rollout)
+                        continue
+                    if meta['thread_title']: node.title = meta['thread_title']
+                    if meta['parent_thread_id']: node.parent = meta['parent_thread_id']
+                    if meta['rollout']: node.rollout = meta['rollout']
+            for name,payload in batch['pending']:
+                self.ingest(payload)
+                self.files.add(name)
+            for actor,observed in batch['observed']:
+                # Apply against *current* UI state, not a worker's stale copy.
+                self._apply_lifecycle(actor,observed,now)
+            unread = batch['unread']
+            self.unread_supported = unread is not None
+            if unread is not None:
+                for node in self.store.nodes.values():
+                    if node.result and not node.parent and now-(node.completion or now) > 3:
+                        node.unread = node.id in unread and node.id not in self.opened
+            for node in self.store.nodes.values():
+                if (node.active and node.status == 'thinking' and
+                    node.payload.get('event') == 'UserPromptSubmit' and node.id not in self.metadata and
+                    # Require a checked, matching path; a newer hook may have
+                    # supplied a rollout while the batch was in flight.
+                    batch['rollout_exists'].get(node.id) == (node.rollout,False) and
+                    now-node.last_event > UNCONFIRMED_START_GRACE):
+                    self.store.expire_unconfirmed_start(node.id,now)
+        self.background.submit(dict(nodes={n.id:(n.rollout,n.active) for n in self.store.nodes.values()},
+            versions={n.id:n.last_event for n in self.store.nodes.values()},seen=frozenset(self.files)))
+        self.store.reconcile(now)
 
     def refresh_metadata(self, now, actors=()):
         if not self.enabled:
@@ -226,6 +292,9 @@ class CodexObserver:
 
     def poll(self, now=None):
         now = time.time() if now is None else now
+        if self.background is not None:
+            self._poll_background(now)
+            return
         directory = self.state_dir/'family-events'
         pending = []
         for file in sorted(directory.glob('*.json')):
@@ -263,21 +332,7 @@ class CodexObserver:
                 self.log_checked_at[actor] = now
                 observed = latest_lifecycle(path)
                 self.log_valid[actor] = observed is not None
-                if not observed:
-                    continue
-                kind, turn, when = observed
-                node = self.store.nodes.get(actor)
-                if node is None and (kind != 'task_started' or now-when > 600):
-                    continue
-                if node and when <= node.last_event:
-                    continue
-                event = {'task_started':'ResumeDetected','task_complete':'TaskCompleteFallback','turn_aborted':'Interrupt'}[kind]
-                if node and event == 'ResumeDetected' and node.turn == turn and node.status != 'interrupted':
-                    continue
-                if node and node.turn != turn and event != 'ResumeDetected':
-                    self.ingest({'session_id':actor,'event':'ResumeDetected','status':'working','turn_id':turn,'received_at':when-.001,'token':'observed-start-'+actor+turn})
-                self.ingest({'session_id':actor,'event':event,'status':{'ResumeDetected':'working','Interrupt':'interrupted','TaskCompleteFallback':'success'}[event],
-                    'turn_id':turn,'received_at':when,'token':'observed-'+actor+kind+turn})
+                self._apply_lifecycle(actor,observed,now)
             try:
                 value = json.loads((self.home/'.codex-global-state.json').read_text(encoding='utf-8'))
                 unread = unread_ids(value)
@@ -296,3 +351,103 @@ class CodexObserver:
                     now-node.last_event > UNCONFIRMED_START_GRACE):
                     self.store.expire_unconfirmed_start(node.id,now)
         self.store.reconcile(now)
+
+
+class ObserverReader:
+    """Single reader owns disk/SQLite state; only the UI owns the live store.
+
+    One outstanding batch bounds memory and prevents a backlog. Shutdown does
+    not wait for an in-flight archive scan, and the daemon never touches HWNDs.
+    """
+    def __init__(self, home, state_dir):
+        self.reader = CodexObserver(FamilyStore(),state_dir,home)
+        self.requests, self.results = queue.Queue(maxsize=1),queue.Queue(maxsize=1)
+        self.pending = False
+        self.closed = threading.Event()
+        self.last_error = None
+        self.thread = threading.Thread(target=self._run,name='pig-observer-io',daemon=True)
+        self.thread.start()
+
+    def submit(self, nodes):
+        if not self.pending and not self.closed.is_set():
+            self.pending = True
+            self.requests.put_nowait(nodes)
+
+    def take(self):
+        try:
+            result = self.results.get_nowait()
+        except queue.Empty:
+            return None
+        self.pending = False
+        self.last_error = result.get('error')
+        return result
+
+    def close(self):
+        self.closed.set()
+        try:
+            self.requests.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def _run(self):
+        while not self.closed.is_set():
+            nodes = self.requests.get()
+            if nodes is None or self.closed.is_set():
+                return
+            try:
+                result = self._read(nodes)
+            except Exception as error:
+                result = {'error':type(error).__name__}
+            if self.closed.is_set():
+                return
+            self.results.put_nowait(result)
+
+    def _read(self, request):
+        nodes = request['nodes']
+        reader, now = self.reader,time.time()
+        pending = []
+        for file in sorted((reader.state_dir/'family-events').glob('*.json')):
+            if file.name in request['seen']:
+                continue
+            try:
+                payload = json.loads(file.read_text(encoding='utf-8-sig'))
+                if isinstance(payload,dict): pending.append((file.name,payload))
+            except (OSError,ValueError,TypeError):
+                pass
+        actors = {p.get('agent_id') or p.get('session_id') for _,p in pending}
+        actors.update(actor for actor,(_,active) in nodes.items() if active)
+        reader.refresh_metadata(now,actors)
+        observed = []
+        if now-reader.observed_at >= 1:
+            reader.observed_at = now
+            candidates = {actor:meta['rollout'] for actor,meta in reader.metadata.items()}
+            candidates.update({actor:path for actor,(path,_) in nodes.items() if path})
+            for actor,path in candidates.items():
+                if self.closed.is_set(): break
+                if not path: continue
+                try:
+                    actual = rollout_file(path)
+                    info = actual.stat()
+                    modified = (str(actual),info.st_mtime_ns,info.st_size)
+                except OSError:
+                    continue
+                retry = now-reader.log_checked_at.get(actor,0) >= 15 and (not reader.log_valid.get(actor) or nodes.get(actor,('',False))[1])
+                if reader.modifications.get(actor) == modified and not retry:
+                    continue
+                value = latest_lifecycle(path)
+                reader.modifications[actor] = modified
+                reader.log_checked_at[actor] = now
+                reader.log_valid[actor] = value is not None
+                if value: observed.append((actor,value))
+            try:
+                reader._unread = unread_ids(json.loads((reader.home/'.codex-global-state.json').read_text(encoding='utf-8')))
+            except (OSError,ValueError):
+                reader._unread = None
+        exists = {}
+        for actor,(path,_) in nodes.items():
+            try:
+                exists[actor] = (path,bool(path and rollout_file(path).is_file()))
+            except OSError:
+                exists[actor] = (path,False)
+        return dict(metadata=reader.metadata,pending=pending,observed=observed,
+            unread=getattr(reader,'_unread',None),rollout_exists=exists,node_versions=request['versions'])
