@@ -11,6 +11,7 @@ import uuid
 import zstandard
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from codex_bridge import atomic_json,publish_event
+from windows_pet import APP_BUILD
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -54,13 +55,22 @@ def main():
     def node(h,actor):return next((n for n in h.get('families',[]) if n['id']==actor),{})
     process=start();passed=[]
     try:
-        h=wait(lambda h:h.get('pid')==process.pid and h.get('build')=='20261017.3-state-audit' and node(h,'child').get('status')=='success')
+        h=wait(lambda h:h.get('pid')==process.pid and h.get('build')==APP_BUILD and node(h,'child').get('status')=='success')
         assert h['selected_family']==''
         passed.append('Frozen observer resolves actor beyond 256 and compressed completion beside empty plaintext')
         passed.append('17 MiB compressed fixture decodes with bundled dependency and no Python PATH')
         publish_event(state,dict(session_id='root',event='UserPromptSubmit',turn_id='new'))
         wait(lambda h:node(h,'root').get('status')=='thinking')
         passed.append('Fresh real-turn start remains active')
+        safety=dict(session_id='safety',event='UserPromptSubmit',turn_id='s',source='codex-hook',cwd='/',prompt_preview='You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\ncheck')
+        publish_event(state,dict(session_id='safety',event='SessionStart'))
+        publish_event(state,safety)
+        publish_event(state,dict(session_id='safety',event='Stop',turn_id='s'))
+        publish_event(state,dict(safety,session_id='normal-safety-quote',cwd='C:/project'))
+        wait(lambda h:node(h,'normal-safety-quote').get('status')=='thinking')
+        assert not node(read(),'safety')
+        publish_event(state,dict(session_id='normal-safety-quote',event='SessionEnd',turn_id='s'))
+        passed.append('Frozen observer filters safety check but retains same text in a project')
         for event in ('PreCompact','PostCompact'):
             publish_event(state,dict(session_id='root',event=event,turn_id='new'))
             wait(lambda h:node(h,'root').get('status')==('compacting' if event=='PreCompact' else 'success'))
@@ -71,6 +81,7 @@ def main():
         passed.append('Only a fresh tool start resumes after compaction; delayed result cannot')
         close(process);process=start()
         wait(lambda h:h.get('pid')==process.pid and node(h,'root').get('status')=='working' and node(h,'child').get('status')=='success')
+        assert not node(read(),'safety')
         passed.append('Restart replay preserves live root without resurrecting finished child')
         publish_event(state,dict(session_id='root',event='Stop',turn_id='new'))
         wait(lambda h:node(h,'root').get('status')=='success' and h.get('selected_family')=='')

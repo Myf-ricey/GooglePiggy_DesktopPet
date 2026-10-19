@@ -15,14 +15,13 @@ from windows_pet import APP_BUILD
 OVERLAY=[
     'pig_pet.py','codex_bridge.py','animation_clock.py','family_store.py','leisure.py',
     'codex_observer.py','windows_pet.py','pig_pet.spec','install.ps1','uninstall.ps1',
-    'build-release.ps1','README.md','README-WINDOWS.md','ASSET-NOTICE.md','WINDOWS-0.4-HANDOFF.md',
-    'RELEASE-NOTES-v0.5.1-windows.md','hooks/codex-pig-hook.ps1',
+    'build-release.ps1','README.md','README-WINDOWS.md','ASSET-NOTICE.md','WINDOWS-0.4-HANDOFF.md','VERSIONING.md',
+    'RELEASE-NOTES-v0.5.3-windows.md','hooks/codex-pig-hook.ps1',
     'windows_update.py','update_notice.py','tools/test_windows_update.py',
     'tools/test_internal_memory.py','tools/test_windows_update_runtime.py','tools/prepare_windows_update.py',
     'requirements.txt','tools/test_compressed_rollout.py',
     'tools/test_state_audit.py',
-    'tools/test_state_runtime.py',
-    '.github/workflows/windows-release.yml',
+    'tools/test_state_runtime.py','tools/test_handoff_053.py','tools/test_hidden_053_runtime.py',
     'tools/package_app_icon.py','tools/test_windows_port.py','tools/test_windows_runtime.py',
     'tools/package_windows_candidate.py','tools/smoke_test.py',
 ]
@@ -42,7 +41,8 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--baseline-source',required=True,type=Path)
     parser.add_argument('--source-commit',default='a5d5304df4c725e6352e911f6c6d41a5bb0e8076')
-    parser.add_argument('--version',default='0.5.1')
+    parser.add_argument('--version',default='0.5.3')
+    parser.add_argument('--published',action='store_true')
     parser.add_argument('--portable-dir',type=Path,default=ROOT/'dist/GifPigDesktopPet')
     args=parser.parse_args()
     baseline=args.baseline_source.resolve()
@@ -63,12 +63,12 @@ def main():
     shutil.copytree(ROOT/'assets/icons',stage/'assets/icons',dirs_exist_ok=True)
     evidence_ignore=shutil.ignore_patterns('*.zip','SHA256SUMS.txt','release-manifest.json')
     shutil.copytree(output,stage/('releases/windows-'+version),dirs_exist_ok=True,ignore=evidence_ignore)
-    provenance={'handoff_base_commit':sha,'windows_source_status':'local uncommitted candidate; not published',
+    provenance={'source_commit':sha,'windows_source_status':'published source commit' if args.published else 'local uncommitted candidate; not published',
         'overlay_sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in OVERLAY},
         'version':version+'-windows','build':APP_BUILD,'planned_tag':'v'+version+'-windows'}
     (stage/'WINDOWS-SOURCE-PROVENANCE.json').write_text(json.dumps(provenance,indent=2)+'\n',encoding='utf-8')
     portable=args.portable_dir.resolve()
-    for name in ('README.md','README-WINDOWS.md','WINDOWS-0.4-HANDOFF.md','RELEASE-NOTES-v0.5.1-windows.md'):
+    for name in ('README.md','README-WINDOWS.md','WINDOWS-0.4-HANDOFF.md','RELEASE-NOTES-v0.5.3-windows.md'):
         shutil.copy2(ROOT/name,portable/name)
     shutil.copytree(output,portable/('releases/windows-'+version),dirs_exist_ok=True,ignore=evidence_ignore)
     (portable/'WINDOWS-SOURCE-PROVENANCE.json').write_text(json.dumps(provenance,indent=2)+'\n',encoding='utf-8')

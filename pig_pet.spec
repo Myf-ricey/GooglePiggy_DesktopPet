@@ -10,7 +10,7 @@ datas = [
     (str(project_dir / "tools"), "tools"),
     (str(project_dir / "README.md"), "."),
     (str(project_dir / "README-WINDOWS.md"), "."),
-    (str(project_dir / "RELEASE-NOTES-v0.5.1-windows.md"), "."),
+    (str(project_dir / "RELEASE-NOTES-v0.5.3-windows.md"), "."),
     (str(project_dir / "WINDOWS-0.4-HANDOFF.md"), "."),
     (str(project_dir / "ASSET-NOTICE.md"), "."),
     (str(project_dir / "install.ps1"), "."),

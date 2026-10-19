@@ -6,10 +6,12 @@ __pycache__/
 build/
 cache/
 dist/
+dist-candidate/
+dist-hotfix/
+dist-audit/
 qa/
 learning-materials/
 pig-pet-error.log
 *.log
 
-.DS_Store
-output/
+dist-053/

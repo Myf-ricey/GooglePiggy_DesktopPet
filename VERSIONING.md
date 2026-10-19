@@ -18,3 +18,7 @@
 - Windows：以已发布 `v0.5.1-windows` 为基线，完成上述两项修复、确认正常任务不被误过滤，并通过 Windows 回归与原生窗口测试后，发布 **`v0.5.3-windows`**。
 - Windows 可从 0.5.1 直接升到 0.5.3，不需要补发 0.5.2。必须按目标版本一致更新 Windows 程序版本、包名、更新清单、校验文件及发布说明，并验证从 0.5.1 升级的路径和失败恢复。
 - 本次文档更新不代表 Windows 已完成移植，也不提前修改其程序版本或发布标签。执行清单见 [Windows 交接](releases/macos-0.5.3/WINDOWS-HANDOFF.md)。
+
+## Windows 0.5.3 验收完成
+
+Windows 0.5.3（构建 20261019.1-hidden-family）已完成两项移植、自启动默认与偏好保留、压缩完成边界修复，及 Windows 原生、0.5.1 升级／失败回滚验收。详见 [Windows 验收](releases/windows-0.5.3/ACCEPTANCE.md)。

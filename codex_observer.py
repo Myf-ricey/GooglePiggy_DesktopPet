@@ -185,6 +185,8 @@ class CodexObserver:
         p = dict(value)
         actor = p.get('agent_id') or p.get('session_id')
         preview = str(p.get('prompt_preview') or '').replace('\r\n', '\n')
+        safety_request = (p.get('source') == 'codex-hook' and p.get('cwd') == '/' and
+            preview.startswith('You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\n'))
         title_request = (p.get('internal_request_kind') == 'conversation_title' or
                          (preview.startswith('User\'s request:\n"""\n') and '\n"""\n\nGener' in preview))
         # Memory consolidation runs in the dedicated memory directory. Require
@@ -201,7 +203,7 @@ class CodexObserver:
             not p.get('agent_id') and not p.get('parent_thread_id') and
             not self.metadata.get(actor, {}).get('parent_thread_id') and
             not getattr(self.store.nodes.get(actor), 'parent', '') and
-            (memory_request or title_request or preview.startswith(INTERNAL_PROMPT_PREFIXES))):
+            (memory_request or title_request or safety_request or preview.startswith(INTERNAL_PROMPT_PREFIXES))):
             self.internal_sessions.add(actor)
             self.store.nodes.pop(actor,None) # SessionStart may already exist.
             if self.store.selected == actor:

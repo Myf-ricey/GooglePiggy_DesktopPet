@@ -92,8 +92,11 @@ def main():
         assert len(h['hidden_work_tokens'])==16
         passed.append('Active family + 4 children hides; same-turn tool receipt stays hidden')
         event('actor-0','UserPromptSubmit','t2',status='thinking')
+        time.sleep(.5)
+        wait_for(lambda h:h['presentation']=='hidden')
+        command('reveal')
         wait_for(lambda h:h['presentation']=='visible' and not h['tail_visible'])
-        passed.append('New turn reveals whole family automatically')
+        passed.append('New turn stays hidden; tail action reveals whole family')
         for edge in ('left','top','bottom'):
             command('edge',edge=edge)
             wait_for(lambda h:h['presentation']=='hidden' and h['hidden_edge']==edge)

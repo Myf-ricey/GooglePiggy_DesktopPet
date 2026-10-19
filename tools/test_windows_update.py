@@ -205,7 +205,7 @@ class UpdateTests(unittest.TestCase):
                 local=tuple(round(v*scale) for v in (230,104,590,620))
                 content=tuple(local[i]+origin[i%2] for i in range(4))
                 moved=[]
-                pet=SimpleNamespace(hwnd=1,dragging=False,edge_transition=None,edge_placement=None,
+                pet=SimpleNamespace(hwnd=1,dragging=False,edge_transition=None,edge_placement=None,hidden_family='',
                     _current_content_local_bounds=lambda:local,_screen_bounds_for_local=lambda r:content,
                     _window_rect=lambda hwnd:(*origin,origin[0]+round(640*scale),origin[1]+round(640*scale)),
                     _set_window_origin=lambda hwnd,xy:moved.append(xy))

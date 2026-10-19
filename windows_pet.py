@@ -19,8 +19,8 @@ from windows_update import Checker, Installer, prepare_helper, Release, validate
 from update_notice import UpdateNotice
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.1-windows'
-APP_BUILD = '20261017.3-state-audit'
+APP_VERSION = '0.5.3-windows'
+APP_BUILD = '20261019.1-hidden-family'
 
 
 @lru_cache(maxsize=4)
@@ -93,6 +93,11 @@ class WindowsPet(win.PigPet):
         self.visual_epoch = time.monotonic()
         self.idle_epoch = self.visual_epoch
         self.hidden_tokens = set()
+        self.hidden_family = ''
+        self.hidden_since = 0
+        self.reveal_completion = ''
+        self.celebration_family = ''
+        self.celebration_started = 0
         self.known_work = set()
         self.drag_direction = -1
         self.drag_last_x = None
@@ -136,7 +141,24 @@ class WindowsPet(win.PigPet):
 
     @property
     def activity_requires_visible_pet(self):
+        if self.hidden_family:
+            node = self.store.nodes.get(self.hidden_family)
+            return bool(node and not node.active and node.status == 'success' and
+                node.payload.get('event') in {'Stop','TaskCompleteFallback'} and
+                node.completion is not None and node.completion > self.hidden_since and
+                not any(n.active for n in self.store.nodes.values() if self._belongs_to_hidden_family(n)))
         return bool(self.permission_request or self.store.work_tokens()-self.hidden_tokens)
+
+    def _belongs_to_hidden_family(self, node):
+        seen = set()
+        while node.parent and node.id not in seen:
+            seen.add(node.id)
+            if node.parent == self.hidden_family:
+                return True
+            node = self.store.nodes.get(node.parent)
+            if node is None:
+                break
+        return False
 
     def _apply_bridge_payload(self,payload):
         # Legacy events have their own actor, never occupy another task's slot.
@@ -158,6 +180,16 @@ class WindowsPet(win.PigPet):
             return False
         self.last_family_poll = now
         self.observer.poll()
+        pinned = self.hidden_family or self.reveal_completion
+        if self.celebration_family:
+            node = self.store.nodes.get(self.celebration_family)
+            if (now-self.celebration_started < self.animations['jump'].total_duration/1000
+                    and node and not node.active):
+                pinned = pinned or self.celebration_family
+            else:
+                self.celebration_family = ''
+        if pinned:
+            self.store.select(pinned)
         legacy = win.read_status(self.status_path)
         self._apply_bridge_payload(legacy)
         tokens = self.store.work_tokens()
@@ -351,7 +383,8 @@ class WindowsPet(win.PigPet):
             canvas.alpha_composite(self.animations['sleep_z'].frames[self.animations['sleep_z'].frame(now-self.leisure.sleep_epoch)])
         if key == 'jump':
             node = self.store.nodes.get(self.store.selected)
-            self.success_effect_started = now-max(0,time.time()-node.completion) if node and node.completion else self.visual_epoch
+            self.success_effect_started = (self.celebration_started if self.celebration_family == self.store.selected
+                else now-max(0,time.time()-node.completion) if node and node.completion else self.visual_epoch)
             self._composite_success_effects(canvas)
         children = self.store.children(self.store.selected,time.time())
         self.child_rects = {}
@@ -537,8 +570,36 @@ class WindowsPet(win.PigPet):
 
     def _begin_edge_hide_if_needed(self):
         self.hidden_tokens = self.store.work_tokens().copy()
+        node = self.store.nodes.get(self.store.selected)
+        self.hidden_family = node.id if node and (node.active or any(n.active for n in self.store.children(node.id,time.time()))) else ''
+        self.hidden_since = time.time()
         self.leisure.cancel()
-        return super()._begin_edge_hide_if_needed()
+        result = super()._begin_edge_hide_if_needed()
+        if not result:
+            self.hidden_family = ''
+        return result
+
+    def _begin_edge_reveal(self, play_reveal_animation):
+        if self.hidden_family and self.activity_requires_visible_pet:
+            self.reveal_completion = self.hidden_family
+        result = super()._begin_edge_reveal(play_reveal_animation)
+        if result:
+            self.hidden_family = ''
+        return result
+
+    def _finish_edge_reveal(self):
+        actor = self.reveal_completion
+        self.reveal_completion = ''
+        if actor and actor in self.store.nodes and not self.store.nodes[actor].active:
+            self.celebration_family = actor
+            self.celebration_started = time.monotonic()
+            node = self.store.nodes[actor]
+            self.clock.tracks.pop(actor,None)
+            self.clock.update(actor,node.turn,'jump',self.celebration_started)
+            self.store.select(actor)
+            self.transient_key = None
+            self._resolve_visual()
+        super()._finish_edge_reveal()
 
     def _show_tail(self,placement):
         if not self.tail_hwnd:
@@ -733,7 +794,7 @@ class WindowsPet(win.PigPet):
         return super()._wndproc(hwnd,message,wparam,lparam)
 
     def _fit_update_notice(self):
-        if not self.hwnd or self.dragging or self.edge_transition:
+        if not self.hwnd or self.dragging or self.edge_transition or self.hidden_family:
             return
         if self.edge_placement:
             self._begin_edge_reveal(False)

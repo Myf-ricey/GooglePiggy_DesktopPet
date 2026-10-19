@@ -280,7 +280,15 @@ class PortTests(unittest.TestCase):
             atomic_json(home/'hooks.json',original)
             import os
             env=dict(os.environ,CODEX_HOME=str(home))
-            result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'install.ps1'),'-NoAutostart','-NoDesktopShortcut','-NoStart','-NoEnableHookFeature'],env=env,capture_output=True,timeout=20)
+            import uuid, winreg
+            test_key='Software\\GooglePiggy-Test-'+uuid.uuid4().hex
+            script=home/'install-test.ps1'
+            script.write_text((ROOT/'install.ps1').read_text(encoding='utf-8-sig').replace('$appDir = $PSScriptRoot', "$appDir = '"+str(ROOT).replace("'","''")+"'").replace('Software\\GooglePiggy\\Preferences',test_key).replace(win.AUTOSTART_REGISTRY_KEY,test_key+'\\Run'),encoding='utf-8-sig')
+            try:
+                result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),'-NoAutostart','-NoDesktopShortcut','-NoStart','-NoEnableHookFeature'],env=env,capture_output=True,timeout=20)
+            finally:
+                try: winreg.DeleteKey(winreg.HKEY_CURRENT_USER,test_key)
+                except FileNotFoundError: pass
             self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
             config=json.loads((home/'hooks.json').read_text(encoding='utf-8'))['hooks']
             self.assertEqual(len(config),12)

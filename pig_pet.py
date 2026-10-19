@@ -391,6 +391,10 @@ def startup_command(app_dir: Path) -> str:
     return subprocess.list2cmdline([str(executable), str(app_dir / "pig_pet.py")])
 
 
+AUTOSTART_PREFERENCE_KEY = r'Software\GooglePiggy\Preferences'
+STARTUP_APPROVED_KEY = r'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+
+
 def set_autostart(enabled: bool, app_dir: Path) -> None:
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY) as key:
         if enabled:
@@ -406,15 +410,54 @@ def set_autostart(enabled: bool, app_dir: Path) -> None:
                 winreg.DeleteValue(key, AUTOSTART_VALUE_NAME)
             except FileNotFoundError:
                 pass
+    # Only an explicit user choice clears Windows' disabled-startup marker.
+    if enabled:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY) as key:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_VALUE_NAME)
+            except FileNotFoundError:
+                pass
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
+        winreg.SetValueEx(key, 'AutostartEnabled', 0, winreg.REG_DWORD, int(enabled))
 
 
 def is_autostart_enabled() -> bool:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY) as key:
             winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
-            return True
     except FileNotFoundError:
         return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
+            if isinstance(value, bytes) and value and value[0] in (3, 7):
+                return False
+    except FileNotFoundError:
+        pass
+    return True
+
+
+def configure_first_autostart(app_dir: Path, previous_install: bool = False) -> None:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
+            winreg.QueryValueEx(key, 'AutostartEnabled')
+            return
+    except FileNotFoundError:
+        pass
+    # An existing Run/approval entry belongs to an earlier install or to the
+    # system Startup Apps UI. Adopt it without overriding the user's choice.
+    for path in (AUTOSTART_REGISTRY_KEY, STARTUP_APPROVED_KEY):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
+                winreg.SetValueEx(key, 'AutostartEnabled', 0, winreg.REG_DWORD, int(is_autostart_enabled()))
+            return
+        except FileNotFoundError:
+            pass
+    # Legacy versions saved opt-out by removing Run, without a preference.
+    # An upgrade / existing production heartbeat identifies that migration.
+    set_autostart(not previous_install, app_dir)
 
 
 def acquire_single_instance() -> wintypes.HANDLE | None:
@@ -3101,6 +3144,7 @@ def main() -> None:
             set_autostart(args.enable_autostart, app_dir)
             return
 
+        previous_install = bool(update_start or read_json_file(heartbeat_path_for_status(status_path)))
         if not args.qa_only:
             write_json_atomic(
                 heartbeat_path_for_status(status_path),
@@ -3134,6 +3178,8 @@ def main() -> None:
             mutex = kernel32.CreateMutexW(None, False, mutex_name)
             if not mutex or kernel32.GetLastError() == 183:
                 return
+            if getattr(sys, 'frozen', False) and not (args.status_file or args.qa_window or args.no_codex_observer):
+                configure_first_autostart(app_dir, previous_install=previous_install)
             WindowsPet(animations, qa_dir / 'manifest-report.json', app_dir, status_path, observe=not args.no_codex_observer).run()
             return
         cache_dir = app_dir / "cache"

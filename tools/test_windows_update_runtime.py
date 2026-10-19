@@ -28,12 +28,16 @@ def until(predicate,timeout=45):
 
 def main():
     candidate=Path(sys.argv[1]).resolve()
+    old=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else candidate
+    from windows_pet import APP_VERSION
+    version=APP_VERSION.removesuffix('-windows')
+    old_version='0.5.1' if old != candidate else version
     root=ROOT/'qa/update-native'/('中文 空格 '+uuid.uuid4().hex)
     root.mkdir(parents=True)
-    target=root/'安装目录'; shutil.copytree(candidate,target)
+    target=root/'安装目录'; shutil.copytree(old,target)
     state=root/'state'; state.mkdir()
     status=state/'codex-status.json'; heartbeat=state/'pig-heartbeat.json'
-    make_manifest(target,'0.5.1')
+    make_manifest(target,old_version)
     (target/'user-settings.json').write_text('preserve user settings',encoding='utf-8')
     # Isolation is passed to restarted processes by the real helper.
     process=subprocess.Popen([str(target/'pig_pet.exe'),'--qa-window','--no-codex-observer','--status-file',str(status)],cwd=target)
@@ -44,7 +48,7 @@ def main():
         h=read(heartbeat)
         return h if all(h.get(k)==v for k,v in values.items()) else None
     try:
-        until(lambda:hmatch(pid=process.pid,window_visible=True,version='0.5.1-windows'))
+        until(lambda:hmatch(pid=process.pid,window_visible=True,version=old_version+'-windows'))
         assert not read(heartbeat)['update_checking']
         passed.append('Frozen isolated GUI starts without network checks')
         command('update-preview')
@@ -59,8 +63,8 @@ def main():
         request=state/'permission-requests/test.request.json'
         atomic_json(request,dict(request_id='test',session_id='permission-fixture',turn_id='t1',summary='合成权限优先级测试'))
         until(lambda:hmatch(update_visible=False,current_key='question'))
-        package=root/'upgrade/package'; shutil.copytree(candidate,package); make_manifest(package,'0.5.1')
-        command('update-install',package=str(package),version='0.5.1')
+        package=root/'upgrade/package'; shutil.copytree(candidate,package); make_manifest(package,version)
+        command('update-install',package=str(package),version=version)
         until(lambda:hmatch(update_phase='ready',update_visible=False))
         time.sleep(1)
         assert process.poll() is None and not (package.parent/'helper-ready.json').exists()
@@ -69,7 +73,7 @@ def main():
         result_file=package.parent/'install-result.json'
         result=until(lambda:read(result_file),90)
         assert result.get('success'),result
-        h=until(lambda:hmatch(version='0.5.1-windows',window_visible=True) if read(heartbeat).get('pid')!=process.pid else None)
+        h=until(lambda:hmatch(version=APP_VERSION,window_visible=True) if read(heartbeat).get('pid')!=process.pid else None)
         current_pid=h['pid']
         assert process.wait(timeout=5)==0
         assert (Path(result['backup'])/'pig_pet.exe').exists()
@@ -79,12 +83,12 @@ def main():
         # CreateProcess failure must restore the complete previous installation.
         broken=root/'rollback/package'; shutil.copytree(candidate,broken)
         (broken/'pig_pet.exe').write_bytes(b'not a Windows executable')
-        make_manifest(broken,'0.5.2')
-        command('update-install',package=str(broken),version='0.5.2')
+        make_manifest(broken,'0.5.4')
+        command('update-install',package=str(broken),version='0.5.4')
         failed=until(lambda:read(broken.parent/'install-result.json'),90)
         assert failed.get('success') is False,failed
         old_pid=current_pid
-        h=until(lambda:hmatch(version='0.5.1-windows',window_visible=True) if read(heartbeat).get('pid')!=old_pid else None)
+        h=until(lambda:hmatch(version=APP_VERSION,window_visible=True) if read(heartbeat).get('pid')!=old_pid else None)
         current_pid=h['pid']
         assert (target/'user-settings.json').read_text(encoding='utf-8')=='preserve user settings'
         passed.append('Real restart failure restores previous EXE and relaunches it')

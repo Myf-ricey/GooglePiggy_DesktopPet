@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "pass_items": [
+    "Frozen observer resolves actor beyond 256 and compressed completion beside empty plaintext",
+    "17 MiB compressed fixture decodes with bundled dependency and no Python PATH",
+    "Fresh real-turn start remains active",
+    "Frozen observer filters safety check but retains same text in a project",
+    "Only a fresh tool start resumes after compaction; delayed result cannot",
+    "Restart replay preserves live root without resurrecting finished child",
+    "Explicit final completion clears active family"
+  ]
+}
