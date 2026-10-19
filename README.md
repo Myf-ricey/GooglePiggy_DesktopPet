@@ -36,6 +36,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 macOS 0.5.3 修复运行中强制隐藏后提前弹出，并补充建议安全检查后台会话过滤，并支持一键下载、签名校验、备份旧版并覆盖重启，保留启动检查、右键检查和发光灯泡提示。Mac 保持独立版本与发行包，安装、首次授权及交互说明见 [README-MAC.md](README-MAC.md)。
 
+## 版本规划
+
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布；平台专属修复允许补丁号暂时不同。Windows 本轮目标为 **0.5.3（待移植与验收）**，当前已发布版本仍以上表为准。详见 [版本号规则](VERSIONING.md) 和 [Windows 交接](releases/macos-0.5.3/WINDOWS-HANDOFF.md)。
+
 ## 开发与验证
 
 Windows 源码使用 Python 3.11+，本次在 Python 3.13、Windows 11 x64、150% DPI 单屏环境验证。
