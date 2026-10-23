@@ -48,12 +48,24 @@ jobs:
           swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/update-checker/main.swift -o /tmp/googlepiggy-update-test
           /tmp/googlepiggy-update-test
 
+      - name: Test appearance and pet decoration scaling
+        run: |
+          swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift macos/Sources/GooglePiggy/FamilySelector.swift macos/Sources/GooglePiggy/UpdateNotice.swift macos/Sources/GooglePiggy/AppearancePreview.swift tests/appearance/main.swift -o /tmp/googlepiggy-appearance-tests
+          /tmp/googlepiggy-appearance-tests
+          swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift macos/Sources/GooglePiggy/EdgeHiding.swift tests/animation-scale/main.swift -o /tmp/googlepiggy-animation-scale-test
+          /tmp/googlepiggy-animation-scale-test
+
+      - name: Install Keka
+        run: |
+          if [ ! -x /Applications/Keka.app/Contents/MacOS/Keka ]; then
+            brew install --cask keka
+          fi
+
       - name: Build and test native macOS release
         env:
           BUILD_UNIVERSAL: "0"
           PYTHON: python
-          # Hosted runners cannot grant Keka interactive directory access.
-          ZIP_PACKAGER: ditto
+          ZIP_PACKAGER: keka
         run: |
           chmod +x build-macos.sh macos/*.command
           ./build-macos.sh

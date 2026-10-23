@@ -5,7 +5,7 @@
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
 | Windows 10/11 x64 | **0.5.5** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.5-windows/GooglePiggy-0.5.5-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
-| macOS 13+ | **0.5.3** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.3-macos) · [macOS 说明](README-MAC.md) |
+| macOS 13+ | **0.5.6** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.6-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
 
@@ -34,11 +34,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## macOS
 
-macOS 0.5.3 修复运行中强制隐藏后提前弹出，并补充建议安全检查后台会话过滤，并支持一键下载、签名校验、备份旧版并覆盖重启，保留启动检查、右键检查和发光灯泡提示。Mac 保持独立版本与发行包，安装、首次授权及交互说明见 [README-MAC.md](README-MAC.md)。
+macOS 0.5.6 新增完整外观设置、真实位置预览、任意状态任务跳转，以及随猪猪整体缩放的灯泡和尾巴；保留原有任务隐藏、过滤、签名更新与备份恢复。安装与使用见 [README-MAC.md](README-MAC.md)。
 
 ## 版本规划
 
-同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布；平台专属修复允许补丁号暂时不同。本次 Windows 单独发布 **0.5.5** 性能修复，Mac 保持 **0.5.3**。详见 [版本号规则](VERSIONING.md) 和 [Windows 交接](releases/macos-0.5.3/WINDOWS-HANDOFF.md)。
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Mac 当前为 **0.5.6**；Windows 保持 **0.5.5**，外观更新的对应移植与实机验收尚待完成。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
 
 ## 开发与验证
 

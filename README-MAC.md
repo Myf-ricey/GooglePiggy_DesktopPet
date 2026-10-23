@@ -1,6 +1,6 @@
 # GooglePiggy Desktop Pet for macOS
 
-这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.5.3`。它会陪你
+这是 GooglePiggy 猪猪桌宠的原生 macOS 版。当前发布版本为 `0.5.6`。它会陪你
 观察 Codex 的工作状态，也会在空闲时悄悄躲到屏幕边缘：
 
 - 呼吸待机、点击躺平、拖动左拱；
@@ -14,6 +14,13 @@
 - 便携应用包，运行时不需要 Python、PowerShell 或 Homebrew。
 
 自 `v0.4.0` 起支持：新增多任务状态展示、看书与整理文件动画、随机睡眠和偷吃胡萝卜；切换任务时保留各自的动画进度。Windows 版本不受本次更新影响。
+
+## v0.5.6 更新
+
+- 新增外观设置：独立调整桌宠、对话框和任务栏大小、文字/背景颜色、背景/按钮透明度与间距。
+- 预览在桌宠实际位置显示，恢复默认保留预览勾选；默认对话框保留原有奶油到浅粉渐变。
+- 任意状态的任务均可点击打开对话；灯泡、分层动画与隐藏尾巴随猪猪整体缩放。
+- [发布说明](RELEASE-NOTES-v0.5.6-macos.md)。Windows 对应功能待移植和实机验收，现有 0.5.5 修复保持不变。
 
 ## v0.5.3 更新
 
@@ -61,7 +68,7 @@ swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Source
   - `GooglePiggy-macos-arm64`：Apple Silicon（M1/M2/M3/M4/M5 等）；
   - `GooglePiggy-macos-x64`：Intel Mac。
 
-下载：[macOS v0.5.3 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.3-macos)。
+下载：[macOS v0.5.6 通用安装包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.6-macos)。
 
 ## 推荐安装
 

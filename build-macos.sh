@@ -148,8 +148,8 @@ else
         print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
         exit 1
     fi
-    (cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip -snl "$ZIP_PATH" "$RELEASE_NAME")
-    "$KEKA_CLI" --cli 7zz t "$ZIP_PATH"
+    (cd "$BUILD_ROOT" && "$KEKA_CLI" --ignore-file-access --cli 7zz a -tzip -snl "$ZIP_PATH" "$RELEASE_NAME")
+    "$KEKA_CLI" --ignore-file-access --cli 7zz t "$ZIP_PATH"
 fi
 
 if [[ "${BUILD_DMG:-1}" == "1" ]]; then

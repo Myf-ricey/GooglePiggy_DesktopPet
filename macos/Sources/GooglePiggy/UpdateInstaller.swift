@@ -23,6 +23,7 @@ final class UpdateInstaller: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     private var waitingTimer: Timer?
     private var failed = false
     private var backingUp = false
+    private var pendingCancellationFailure: String?
 
     func install(_ release: PiggyRelease) {
         guard !busy else { return }
@@ -133,7 +134,11 @@ final class UpdateInstaller: NSObject, SPUUserDriver, SPUUpdaterDelegate {
             DispatchQueue.main.async {
                 self.backingUp = false
                 if let error {
-                    self.fail("无法备份当前版本，已取消安装。\n\(error.localizedDescription)")
+                    // Sparkle installs staged updates when the host quits. Report failure only
+                    // after it acknowledges cancellation, since the UI may quit on failure.
+                    self.pendingCancellationFailure = "无法备份当前版本，已取消安装。\n\(error.localizedDescription)"
+                    self.failed = true
+                    self.waitingTimer?.invalidate(); self.waitingTimer = nil; self.readyReply = nil
                     reply(.skip); return
                 }
                 // A permission request could have arrived while copying the backup.
@@ -163,7 +168,10 @@ final class UpdateInstaller: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) { acknowledgement() }
     func dismissUpdateInstallation() {
         waitingTimer?.invalidate(); waitingTimer = nil; readyReply = nil; cancellation = nil; busy = false
-        if !failed { onChange?(.cancelled) }
+        if let message = pendingCancellationFailure {
+            pendingCancellationFailure = nil
+            fail(message)
+        } else if !failed { onChange?(.cancelled) }
     }
     func feedURLString(for updater: SPUUpdater) -> String? {
         #if UPDATE_TESTING

@@ -21,6 +21,7 @@ installer.onChange={event in
     case .working(let message,_,_):
         log(message)
         if scenario == "cancel", message == "正在下载新版本…" { DispatchQueue.main.async { installer.cancel() } }
+    // Immediate exit catches staged updates that were not cancelled before reporting failure.
     case .failed(let message): log("FAILED: "+message);app.terminate(nil)
     case .cancelled: log("CANCELLED");if scenario == "cancel" { app.terminate(nil) }
     }
