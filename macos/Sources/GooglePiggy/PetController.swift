@@ -29,13 +29,13 @@ private struct EdgePlacement {
     let tailFrame: NSRect
 }
 
-private func permissionBodyText(_ detail: String) -> NSAttributedString {
+private func permissionBodyText(_ detail: String, color: NSColor? = nil) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byCharWrapping
     paragraph.lineSpacing = 3
     let attributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 14),
-        .foregroundColor: NSColor(
+        .foregroundColor: color ?? NSColor(
             calibratedRed: 76 / 255,
             green: 67 / 255,
             blue: 70 / 255,
@@ -220,6 +220,56 @@ final class PetController: NSObject, NSApplicationDelegate {
     private let threadAnimations = ThreadAnimationClock()
     private let families = FamilyStore()
     private let familySelector = FamilySelector()
+    private let appearance = PetAppearance.shared
+    private let appearancePanel = AppearancePanel()
+    private let appearancePreview = AppearancePreview()
+
+    // Dialogs scale about the pointer, independently of the sprite scale.
+    private var dialogTransform: NSAffineTransform {
+        let transform = NSAffineTransform()
+        transform.translateX(by: 410, yBy: 358 - appearance.dialogGap / appearance.petScale)
+        transform.scale(by: appearance.dialogScale / appearance.petScale)
+        transform.translateX(by: -410, yBy: -358)
+        return transform
+    }
+    private func dialogBounds(_ rect: NSRect) -> NSRect {
+        let t = dialogTransform
+        let a = t.transform(rect.origin)
+        let b = t.transform(NSPoint(x: rect.maxX, y: rect.maxY))
+        return NSRect(x: a.x, y: a.y, width: b.x-a.x, height: b.y-a.y)
+    }
+    private func dialogPoint(_ point: NSPoint) -> NSPoint {
+        let t = dialogTransform; t.invert(); return t.transform(point)
+    }
+    private func applyAppearance() {
+        guard let window, let petView else { return }
+        let anchor = screenBounds(for: NSRect(x: 410, y: 570, width: 0, height: 0))?.origin
+        // Reserve the largest dialog, including shadow, so no scale clips text.
+        let canvas = NSRect(x: 0, y: 0, width: 640, height: 640)
+            .union(dialogBounds(NSRect(x: 218, y: -12, width: 384, height: 442)))
+        let scale = appearance.petScale
+        window.setContentSize(NSSize(width: canvas.width * scale, height: canvas.height * scale))
+        petView.frame = NSRect(origin: .zero, size: window.frame.size)
+        petView.bounds = canvas
+        if let anchor, let next = screenBounds(for: NSRect(x: 410, y: 570, width: 0, height: 0))?.origin {
+            window.setFrameOrigin(NSPoint(x: window.frame.minX + anchor.x-next.x, y: window.frame.minY + anchor.y-next.y))
+        }
+        familySelector.configure(scale: appearance.taskScale, color: appearance.taskColor,
+                                 opacity: appearance.number("taskOpacity", fallback: 0.9))
+        refreshFamilyState(force: true); renderCurrent(); keepUpdateVisible()
+        appearancePreview.refresh()
+        positionAppearancePreview()
+    }
+    @objc private func showAppearance(_ sender: NSMenuItem) {
+        appearancePanel.onChange = { [weak self] in self?.applyAppearance() }
+        appearancePanel.onPreview = { [weak self] dialog, tasks, _ in
+            guard let self else { return }
+            self.appearancePreview.show(dialog: dialog, tasks: tasks)
+            self.refreshFamilyState(force: true)
+            self.positionAppearancePreview()
+        }
+        appearancePanel.show()
+    }
     private var familyTimer: Timer?
     private var familyPollAt: TimeInterval = 0
     private var familyHoverUntil: TimeInterval = 0
@@ -418,8 +468,10 @@ final class PetController: NSObject, NSApplicationDelegate {
             }
             familySelector.onSelect = { [weak self] id in
                 guard let self else { return }
-                if let node = self.families.nodes[id], node.unread && !node.active {
-                    guard let url = URL(string:"codex://threads/\(id)?hostId=local"), NSWorkspace.shared.open(url) else { return }
+                guard let node = self.families.nodes[id],
+                      let url = URL(string: "codex://threads/\(id)?hostId=local"),
+                      NSWorkspace.shared.open(url) else { return }
+                if node.unread && !node.active {
                     // Remove only after Codex confirms its actual read state.
                     self.familySelector.panel.orderOut(nil)
                     return
@@ -427,6 +479,7 @@ final class PetController: NSObject, NSApplicationDelegate {
                 self.families.select(id); self.focusedChildID = ""
                 self.bridgeToken = ""; self.transientKey = nil
                 self.refreshFamilyState(force: true)
+                self.familySelector.panel.orderOut(nil)
             }
             let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
                 if let self, !self.mouseDown {
@@ -606,6 +659,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         tailPanel.orderOut(nil)
         tailWindow = tailPanel
         tailView = edgeView
+        applyAppearance()
     }
 
     private func presentStartupError(_ error: Error) {
@@ -667,7 +721,10 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     private func currentContentLocalBounds() -> NSRect {
         var result = currentPetLocalBounds()
-        if let notice = visibleUpdateNotice { result = result.union(notice.bounds) }
+        if let notice = visibleUpdateNotice {
+            result = result.union(dialogBounds(notice.dialogBounds))
+            if let decoration = notice.petDecorationBounds { result = result.union(decoration) }
+        }
         if permissionRequest != nil {
             // Include the bubble pointer so an automatic work reveal never
             // leaves an actionable permission prompt behind an edge.
@@ -677,7 +734,7 @@ final class PetController: NSObject, NSApplicationDelegate {
                 width: permissionBubbleRect.width,
                 height: permissionBubbleRect.height + 25
             )
-            result = result.union(bubbleWithPointer)
+            result = result.union(dialogBounds(bubbleWithPointer))
         }
         if !families.children(families.selectedID).isEmpty {
             result = result.union(NSRect(x: 260, y: 500, width: 305, height: 120))
@@ -689,13 +746,8 @@ final class PetController: NSObject, NSApplicationDelegate {
         guard let window else {
             return nil
         }
-        // Animation metadata is top-left based; AppKit screen Y points upward.
-        return NSRect(
-            x: window.frame.minX + localBounds.minX,
-            y: window.frame.maxY - localBounds.maxY,
-            width: localBounds.width,
-            height: localBounds.height
-        )
+        guard let petView else { return nil }
+        return window.convertToScreen(petView.convert(localBounds, to: nil))
     }
 
     private func bottomRevealDrop(for edge: DesktopEdge) -> CGFloat {
@@ -1164,8 +1216,21 @@ final class PetController: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func positionAppearancePreview() {
+        let idle = manifest?.animations["idle"]?.frames.first?.visible_bounds ?? [334,436,486,570]
+        let anchor = NSRect(x: CGFloat(idle[0]), y: CGFloat(idle[1]),
+            width: CGFloat(idle[2]-idle[0]), height: CGFloat(idle[3]-idle[1])).insetBy(dx: -8, dy: -8)
+        appearancePreview.position(
+            dialogFrame: screenBounds(for: dialogBounds(appearancePreview.dialogLogicalBounds)),
+            taskAnchor: screenBounds(for: anchor),
+            screen: (window?.screen ?? NSScreen.main)?.visibleFrame,
+            visible: window?.isVisible == true && edgePlacement == nil && edgeTransition == nil,
+            realDialogVisible: permissionRequest != nil || visibleUpdateNotice != nil)
+    }
+
     private func renderCurrent() {
         keepUpdateVisible()
+        positionAppearancePreview()
         petView?.needsDisplay = true
     }
 
@@ -1475,6 +1540,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func drawCurrentFrame(in bounds: NSRect) {
+        let bounds = NSRect(x: 0, y: 0, width: 640, height: 640)
         guard
             let record = currentFrameRecord(),
             let image = imageStore?.image(relativePath: record.file)
@@ -1502,9 +1568,13 @@ final class PetController: NSObject, NSApplicationDelegate {
             drawSuccessEffects()
         }
         drawFamilyChildren()
+        visibleUpdateNotice?.drawPetDecoration()
+        NSGraphicsContext.saveGraphicsState()
+        dialogTransform.concat()
         if permissionRequest != nil {
             drawPermissionBubble()
-        } else { visibleUpdateNotice?.draw() }
+        } else { visibleUpdateNotice?.draw(backgroundColor: appearance.customDialogColor, backgroundOpacity: appearance.number("dialogOpacity"), buttonOpacity: appearance.number("buttonOpacity"), textColor: appearance.dialogTextColor, buttonTextColor: appearance.buttonTextColor, includePetDecoration: false) }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func refreshFamilyState(force: Bool = false) {
@@ -1554,12 +1624,11 @@ final class PetController: NSObject, NSApplicationDelegate {
             let headScreen = screenBounds(for:hover) else { return }
         let screen = window.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
         let size = familySelector.panel.frame.size
-        let origin = NSPoint(x: min(max(anchorScreen.midX-size.width/2, screen.minX), screen.maxX-size.width),
-            y: min(anchorScreen.maxY+8, screen.maxY-size.height))
+        let origin = familySelectorOrigin(anchor: anchorScreen, size: size, screen: screen, gap: appearance.taskGap)
         familySelector.panel.setFrameOrigin(origin)
         let mouse = NSEvent.mouseLocation
         let corridor = headScreen.union(familySelector.panel.frame)
-        if visibleUpdateNotice != nil { familySelector.panel.orderOut(nil); return }
+        if visibleUpdateNotice != nil || appearancePreview.previewsTasks { familySelector.panel.orderOut(nil); return }
         if headScreen.contains(mouse) || (familySelector.panel.isVisible && corridor.contains(mouse)) {
             familyHoverUntil = now+0.4; familySelector.panel.orderFrontRegardless()
         } else if now > familyHoverUntil { familySelector.panel.orderOut(nil) }
@@ -1610,7 +1679,10 @@ final class PetController: NSObject, NSApplicationDelegate {
 
     private func currentFamilyTailRects() -> [NSRect] {
         guard let p = edgePlacement else { return [] }
-        return familyTailRects(edge:p.edge,main:p.tailFrame,desktop:p.edgeFrame,
+        let scaledTail = tailWindowFrame(edge: p.edge, petFrame: p.tailFrame, desktopFrame: p.edgeFrame,
+            size: EdgeHidePolicy.tailWindowSize * appearance.petScale,
+            screenOverlap: EdgeHidePolicy.tailScreenOverlap * appearance.petScale)
+        return familyTailRects(edge:p.edge,main:scaledTail,desktop:p.edgeFrame,
             children:families.children(families.selectedID).count)
     }
 
@@ -1723,8 +1795,9 @@ final class PetController: NSObject, NSApplicationDelegate {
             return
         }
         let rect = permissionBubbleRect
-        let fill = NSColor(calibratedRed: 0.99, green: 0.975, blue: 0.955, alpha: 1)
-        let ink = NSColor(calibratedRed: 0.27, green: 0.23, blue: 0.23, alpha: 1)
+        let fill = appearance.customDialogColor ?? NSColor(calibratedRed: 0.99, green: 0.975, blue: 0.955, alpha: 1)
+        let dark = (fill.usingColorSpace(.sRGB).map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 } ?? 1) < 0.45
+        let ink = appearance.dialogTextColor ?? (dark ? NSColor.white : NSColor(calibratedRed: 0.27, green: 0.23, blue: 0.23, alpha: 1))
         let rose = NSColor(calibratedRed: 0.66, green: 0.39, blue: 0.43, alpha: 1)
         // A single closed contour keeps the speech tail's border continuous.
         let bubble = NSBezierPath()
@@ -1743,6 +1816,11 @@ final class PetController: NSObject, NSApplicationDelegate {
         bubble.line(to: NSPoint(x: rect.minX, y: rect.minY + radius))
         bubble.curve(to: NSPoint(x: rect.minX + radius, y: rect.minY), controlPoint1: NSPoint(x: rect.minX, y: rect.minY + radius - control), controlPoint2: NSPoint(x: rect.minX + radius - control, y: rect.minY))
         bubble.close()
+        // Composite the complete background once; text is drawn after restoring alpha.
+        NSGraphicsContext.saveGraphicsState()
+        let backgroundContext = NSGraphicsContext.current?.cgContext
+        backgroundContext?.setAlpha(appearance.number("dialogOpacity"))
+        backgroundContext?.beginTransparencyLayer(auxiliaryInfo: nil)
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
@@ -1755,9 +1833,7 @@ final class PetController: NSObject, NSApplicationDelegate {
         // The gradient and shadow follow the same complete silhouette.
         NSGraphicsContext.saveGraphicsState()
         bubble.addClip()
-        let gradient = NSGradient(starting: fill, ending: NSColor(
-            calibratedRed: 0.985, green: 0.90, blue: 0.92, alpha: 1
-        ))!
+        let gradient = NSGradient(starting: fill, ending: appearance.customDialogColor ?? NSColor(calibratedRed: 0.985, green: 0.90, blue: 0.92, alpha: 1))!
         gradient.draw(
             from: NSPoint(x: rect.minX, y: rect.minY),
             to: NSPoint(x: rect.maxX, y: rect.maxY + 10),
@@ -1767,34 +1843,36 @@ final class PetController: NSObject, NSApplicationDelegate {
         NSColor(calibratedRed: 0.88, green: 0.59, blue: 0.67, alpha: 0.92).setStroke()
         bubble.lineWidth = 2
         bubble.stroke()
+        backgroundContext?.endTransparencyLayer()
+        NSGraphicsContext.restoreGraphicsState()
 
         let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
         let titleOrigin = NSPoint(x: rect.minX + 34, y: rect.minY + 17)
         // Align the dot optically to the capital letters, rather than the line box.
         let titleCapCenter = titleOrigin.y + titleFont.ascender - titleFont.capHeight / 2
-        rose.setFill()
+        rose.withAlphaComponent(appearance.number("dialogOpacity")).setFill()
         NSBezierPath(ovalIn: NSRect(x: rect.minX + 20, y: titleCapCenter - 3, width: 6, height: 6)).fill()
         ("CODEX · 需要你的确认" as NSString).draw(
             at: titleOrigin,
-            withAttributes: [.font: titleFont, .foregroundColor: rose]
+            withAttributes: [.font: titleFont, .foregroundColor: appearance.dialogTextColor ?? (dark ? NSColor.white : rose)]
         )
         let summary = request["summary"] as? String ?? "Codex 正在请求权限"
         let bodyRect = NSRect(x: rect.minX + 20, y: rect.minY + 43, width: permissionBodyWidth, height: permissionTextHeight)
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: bodyRect).addClip()
-        permissionBodyText(summary).draw(with: bodyRect, options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine], context: nil)
+        permissionBodyText(summary, color: ink).draw(with: bodyRect, options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine], context: nil)
         NSGraphicsContext.restoreGraphicsState()
 
         for (action, buttonRect) in permissionButtons {
             let pressed = permissionButtonDown == action
             let adjusted = buttonRect.offsetBy(dx: 0, dy: pressed ? 1 : 0)
             let isAllow = action == "allow"
-            (isAllow ? rose : NSColor(calibratedRed: 0.94, green: 0.91, blue: 0.88, alpha: 1)).setFill()
+            (isAllow ? rose : NSColor(calibratedRed: 0.94, green: 0.91, blue: 0.88, alpha: 1)).withAlphaComponent(appearance.number("buttonOpacity")).setFill()
             NSBezierPath(roundedRect: adjusted, xRadius: 10, yRadius: 10).fill()
             let label = isAllow ? "允许一次" : "拒绝"
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-                .foregroundColor: isAllow ? NSColor.white : ink,
+                .foregroundColor: appearance.buttonTextColor ?? (isAllow ? NSColor.white : NSColor.darkGray),
             ]
             let size = (label as NSString).size(withAttributes: attributes)
             (label as NSString).draw(at: NSPoint(x: adjusted.midX - size.width / 2, y: adjusted.midY - size.height / 2), withAttributes: attributes)
@@ -1802,9 +1880,10 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseDown(point: NSPoint) {
-        if let notice = visibleUpdateNotice, notice.bounds.contains(point) {
+        let dialogPoint = dialogPoint(point)
+        if let notice = visibleUpdateNotice, notice.dialogBounds.contains(dialogPoint) {
             updateMouseDown = true
-            notice.pressed = notice.buttons.first(where: { $0.value.contains(point) })?.key
+            notice.pressed = notice.buttons.first(where: { $0.value.contains(dialogPoint) })?.key
             renderCurrent(); return
         }
         for node in families.children(families.selectedID).prefix(3) {
@@ -1817,14 +1896,14 @@ final class PetController: NSObject, NSApplicationDelegate {
         }
         if permissionRequest != nil {
             if let action = permissionButtons.first(where: {
-                $0.value.contains(point)
+                $0.value.contains(dialogPoint)
             })?.key {
                 permissionButtonDown = action
                 permissionBubbleDown = true
                 renderCurrent()
                 return
             }
-            if permissionBubbleRect.contains(point) {
+            if permissionBubbleRect.contains(dialogPoint) {
                 permissionBubbleDown = true
                 return
             }
@@ -1907,9 +1986,10 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     func handleMouseUp(point: NSPoint) {
+        let dialogPoint = dialogPoint(point)
         if updateMouseDown {
             updateMouseDown = false
-            if let notice = visibleUpdateNotice, let action = notice.pressed, notice.buttons[action]?.contains(point) == true {
+            if let notice = visibleUpdateNotice, let action = notice.pressed, notice.buttons[action]?.contains(dialogPoint) == true {
                 if action == "update", let release = notice.release {
                     updateInstaller.install(release)
                 } else if action == "cancel" { updateInstaller.cancel() }
@@ -1922,7 +2002,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             let action = permissionButtonDown
             permissionButtonDown = nil
             permissionBubbleDown = false
-            if let action, permissionButtons[action]?.contains(point) == true {
+            if let action, permissionButtons[action]?.contains(dialogPoint) == true {
                 writePermissionDecision(action)
             } else {
                 renderCurrent()
@@ -2005,7 +2085,7 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func keepUpdateVisible() {
-        guard visibleUpdateNotice != nil, edgePlacement == nil, edgeTransition == nil, !dragging,
+        guard (visibleUpdateNotice != nil || permissionRequest != nil), edgePlacement == nil, edgeTransition == nil, !dragging,
               let window, let frame = screenBounds(for: currentContentLocalBounds()),
               let screen = window.screen ?? NSScreen.main else { return }
         let safe = screen.visibleFrame.insetBy(dx: 12, dy: 12)
@@ -2034,6 +2114,9 @@ final class PetController: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let appearanceItem = NSMenuItem(title: "外观…", action: #selector(showAppearance(_:)), keyEquivalent: "")
+        appearanceItem.target = self
+        menu.addItem(appearanceItem)
         let autostart = NSMenuItem(
             title: isAutostartEnabled() ? "关闭开机自启动" : "开启开机自启动",
             action: #selector(toggleAutostart(_:)),

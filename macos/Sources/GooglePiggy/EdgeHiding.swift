@@ -240,17 +240,19 @@ func tailWindowFrame(
 /// never clamp the outward overlap back onto the display.
 func familyTailRects(edge: DesktopEdge, main: NSRect, desktop: NSRect, children: Int) -> [NSRect] {
     var rects = [main]
-    let small: CGFloat = 32
+    let scale = main.width / EdgeHidePolicy.tailWindowSize
+    let small: CGFloat = 32 * scale
+    let gap: CGFloat = 4 * scale
     let overlap = EdgeHidePolicy.tailScreenOverlap * small / EdgeHidePolicy.tailWindowSize
     for i in 0..<min(3,children) {
         switch edge {
         case .bottom, .top:
-            rects.append(NSRect(x:main.maxX+4+CGFloat(i)*(small+4),
+            rects.append(NSRect(x:main.maxX+gap+CGFloat(i)*(small+gap),
                 y:edge == .bottom ? desktop.minY-overlap : desktop.maxY-small+overlap,
                 width:small,height:small))
         case .left, .right:
             rects.append(NSRect(x:edge == .left ? desktop.minX-overlap : desktop.maxX-small+overlap,
-                y:main.minY-4-CGFloat(i+1)*(small+4),width:small,height:small))
+                y:main.minY-gap-CGFloat(i+1)*(small+gap),width:small,height:small))
         }
     }
     let union = rects.dropFirst().reduce(rects[0]) { $0.union($1) }

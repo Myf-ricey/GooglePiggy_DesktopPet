@@ -1,0 +1,6 @@
+PASS: defaults, persistence, reset, scaled task layout and button hit testing
+PASS: independent preview checkboxes and close cleanup
+PASS: preview follows pet geometry, shares live task placement, yields to real dialogs and hides with pet
+PASS: dialogue background pixels are translucent, text pixels and window alpha remain opaque
+PASS: independent button opacity, opaque button text and default reset
+PASS: text colors and independent gaps persist and reset to original defaults

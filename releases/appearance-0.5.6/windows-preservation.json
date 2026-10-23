@@ -1,0 +1,63 @@
+{
+  "baseline": "1ff99b35d5ae790b51e2dc568747ca3eaeb7fbae",
+  "files": [
+    {
+      "file": "windows_pet.py",
+      "baseline_git_blob_sha256": "1062883d2854a6580f976ebf932f44637b0f38a1a0c595219950a18b86d13afe",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "pig_pet.py",
+      "baseline_git_blob_sha256": "8afc3fba933373b899d1cf1ac99b967ab5993bc3a50637c9dfdbfdbebc54ee72",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "animation_clock.py",
+      "baseline_git_blob_sha256": "b1d5a9a0eb301071ae2eb9b5b761de74ec76e9436d3702925c8b3803ffe1caf3",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "windows_animation_timer.py",
+      "baseline_git_blob_sha256": "089f8ac84789e33edbf2675b89779bcc09ea6c4cd169a69d7a7f91bf6123364e",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "codex_observer.py",
+      "baseline_git_blob_sha256": "db54828f85ca2dae27f64445049927c6a062a7f9af2d8ede73239535bcac5c6a",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "family_store.py",
+      "baseline_git_blob_sha256": "ada5682a602091dbbb4d96694b46a282685a79471e5f6dbca9a3d390f1c09c70",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "update_notice.py",
+      "baseline_git_blob_sha256": "d76f37b58355e20fe3480da296d753e75d79be3a1096cbb900c8df4f9a26a753",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "windows_update.py",
+      "baseline_git_blob_sha256": "2bf2260896ebcc33a4fbe4596b6b0e6f9561c88e4271c666ea6805cedd2f4c64",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "hooks/codex-pig-hook.ps1",
+      "baseline_git_blob_sha256": "b09e6ef4616e4b88d0e69404ebb4621acf9798c4cdf0f3136fb2b817be21ad2d",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "install.ps1",
+      "baseline_git_blob_sha256": "c035f9ef0783a2cff027f7d2fe1a23ea96a34530f02b486006291771c7316ef9",
+      "content_unchanged_ignoring_checkout_eol": true
+    },
+    {
+      "file": "build-release.ps1",
+      "baseline_git_blob_sha256": "d328e105fbf08966037a4ba494359cbac8ff9f6a8bd66f34d311af4557066ebc",
+      "content_unchanged_ignoring_checkout_eol": true
+    }
+  ],
+  "note": "Commit tree preservation is checked separately; Git checkout can normalize CRLF/LF.",
+  "windows_runtime_validation": "Windows 实机待验收",
+  "staged_tree_all_11_blobs_identical": true
+}

@@ -1,0 +1,242 @@
+[
+  {
+    "edge": "left",
+    "check": "reading_to_carrot",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "child_start",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "other_task_start",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "other_task_completion",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "compaction",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "compaction_finished",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "interrupted",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "resumed",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "another_task_running",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "parent_done_child_running",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "corresponding_completion_reveals_and_celebrates",
+    "passed": true
+  },
+  {
+    "edge": "left",
+    "check": "auto_selection_resumes_after_celebration",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "reading_to_carrot",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "child_start",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "other_task_start",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "other_task_completion",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "compaction",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "compaction_finished",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "interrupted",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "resumed",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "another_task_running",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "parent_done_child_running",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "corresponding_completion_reveals_and_celebrates",
+    "passed": true
+  },
+  {
+    "edge": "right",
+    "check": "auto_selection_resumes_after_celebration",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "reading_to_carrot",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "child_start",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "other_task_start",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "other_task_completion",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "compaction",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "compaction_finished",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "interrupted",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "resumed",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "another_task_running",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "parent_done_child_running",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "corresponding_completion_reveals_and_celebrates",
+    "passed": true
+  },
+  {
+    "edge": "top",
+    "check": "auto_selection_resumes_after_celebration",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "reading_to_carrot",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "child_start",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "other_task_start",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "other_task_completion",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "compaction",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "compaction_finished",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "interrupted",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "resumed",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "another_task_running",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "parent_done_child_running",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "corresponding_completion_reveals_and_celebrates",
+    "passed": true
+  },
+  {
+    "edge": "bottom",
+    "check": "auto_selection_resumes_after_celebration",
+    "passed": true
+  }
+]

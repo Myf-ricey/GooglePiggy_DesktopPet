@@ -312,7 +312,7 @@ def main() -> None:
             "restorePetWindowAfterMenuDismissal()"
         )
         assert "paragraph.lineBreakMode = .byCharWrapping" in controller_source
-        assert "permissionBodyText(summary).draw(" in controller_source
+        assert "permissionBodyText(summary, color: ink).draw(" in controller_source
         assert "NSBezierPath(rect: bodyRect).addClip()" in controller_source
         menu_source = controller_source[controller_source.index("func showContextMenu"):controller_source.index("@objc", controller_source.index("func showContextMenu"))]
         assert "预览：" not in menu_source

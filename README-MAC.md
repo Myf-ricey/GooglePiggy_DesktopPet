@@ -302,3 +302,26 @@ swiftc -framework AppKit macos/Sources/GooglePiggy/UpdateNotice.swift tests/upda
 每个 Release 必须额外附带 `appcast.xml` 和 `GooglePiggy-macos-update-版本.zip`，
 由 `tools/package_macos_update.sh` 生成签名清单和只含应用的更新包。
 完整发布顺序及签名说明见 [一键更新发布指南](macos/UPDATE-RELEASE.md)。
+
+
+
+### 外观设置
+
+右键桌宠，在菜单选择“外观…”。桌宠、对话框、任务栏可独立调整为 50%–200%；对话框和任务栏可选择颜色及 10%–100% 不透明度。文字、按钮与间距随所属框同步缩放，设置即时生效并自动保存。“恢复默认”可重置所有外观设置。对话框设置同时用于权限确认和更新提示。
+
+外观回归检查：
+
+```sh
+swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift macos/Sources/GooglePiggy/FamilySelector.swift macos/Sources/GooglePiggy/UpdateNotice.swift macos/Sources/GooglePiggy/AppearancePreview.swift tests/appearance/main.swift -o /tmp/googlepiggy-appearance-tests
+/tmp/googlepiggy-appearance-tests
+```
+
+点击任务栏中的任意任务都会打开对应的 Codex 对话，包括进行中、等待权限和已完成的任务。已完成任务的未读蓝点仍在 Codex 确认已读后消失。
+
+外观面板中的“预览对话框”和“预览任务栏”可分别勾选，在桌宠实际的对话框和任务栏位置持续显示示例，随桌宠移动、缩放并实时更新外观。取消勾选或关闭外观面板会收起预览，示例不影响真实任务或已读状态。
+
+框透明度设置仅影响框背景和边框，独立的“按钮不透明度”滑条控制按钮底色；标题、正文、任务名称和按钮文字保持不透明，实际界面与预览一致。
+
+默认对话框保留原版奶油色至浅粉色渐变与玫瑰色边框。恢复默认仅重置外观参数，保留预览勾选和设置窗口位置。
+
+支持独立设置对话框文字、按钮文字颜色。对话框间距偏移可在原位置基础上向近处或远处调整（−80～200 pt，默认 0）；任务栏间距为 0～200 pt（默认 8）。字体保持不透明，实际显示、按钮点击区域与预览同步更新。

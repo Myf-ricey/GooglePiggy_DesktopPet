@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -360,5 +361,152 @@ final class InstanceLock {
             flock(descriptor, LOCK_UN)
             close(descriptor)
         }
+    }
+}
+
+// Appearance values are independent of task state and survive application updates.
+final class PetAppearance {
+    static let shared = PetAppearance()
+    private let defaults: UserDefaults
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    func number(_ key: String, fallback: Double = 1) -> CGFloat {
+        let value = defaults.object(forKey: "appearance." + key) as? Double ?? fallback
+        let lower = key == "dialogGap" ? -80.0 : key == "taskGap" ? 0.0 : 0.1
+        let upper = key.hasSuffix("Gap") ? 200.0 : 2.0
+        return CGFloat(value.isFinite ? min(upper, max(lower, value)) : fallback)
+    }
+    func set(_ key: String, _ value: Double) { defaults.set(value, forKey: "appearance." + key) }
+    func color(_ key: String, fallback: NSColor) -> NSColor {
+        guard let rgb = defaults.array(forKey: "appearance." + key) as? [Double], rgb.count == 3 else { return fallback }
+        return NSColor(srgbRed: rgb[0], green: rgb[1], blue: rgb[2], alpha: 1)
+    }
+    func setColor(_ key: String, _ color: NSColor) {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return }
+        defaults.set([rgb.redComponent, rgb.greenComponent, rgb.blueComponent], forKey: "appearance." + key)
+    }
+    var petScale: CGFloat { number("petScale") }
+    var dialogScale: CGFloat { number("dialogScale") }
+    var taskScale: CGFloat { number("taskScale") }
+    // nil preserves each original renderer's cream-to-pink gradient.
+    var customDialogColor: NSColor? {
+        guard let rgb = defaults.array(forKey: "appearance.dialogColor") as? [Double], rgb.count == 3 else { return nil }
+        return color("dialogColor", fallback: .white)
+    }
+    var dialogColor: NSColor { customDialogColor ?? NSColor(calibratedRed: 0.985, green: 0.90, blue: 0.92, alpha: 1) }
+    func customColor(_ key: String) -> NSColor? {
+        guard let rgb = defaults.array(forKey: "appearance." + key) as? [Double], rgb.count == 3 else { return nil }
+        return color(key, fallback: .black)
+    }
+    var dialogTextColor: NSColor? { customColor("dialogTextColor") }
+    var buttonTextColor: NSColor? { customColor("buttonTextColor") }
+    var dialogGap: CGFloat { number("dialogGap", fallback: 0) }
+    var taskGap: CGFloat { number("taskGap", fallback: 8) }
+    var taskColor: NSColor { color("taskColor", fallback: .windowBackgroundColor) }
+    func reset() {
+        for key in ["petScale", "dialogScale", "taskScale", "dialogOpacity", "buttonOpacity", "taskOpacity", "dialogColor", "taskColor", "dialogTextColor", "buttonTextColor", "dialogGap", "taskGap"] {
+            defaults.removeObject(forKey: "appearance." + key)
+        }
+    }
+}
+
+final class AppearancePanel: NSObject, NSWindowDelegate {
+    private var window: NSWindow?
+    var onChange: (() -> Void)?
+    var onPreview: ((Bool, Bool, NSRect) -> Void)?
+    private var dialogPreview: NSButton?
+    private var taskPreview: NSButton?
+    private let appearance: PetAppearance
+    private var sliders: [String: NSSlider] = [:]
+    private var colorWells: [String: NSColorWell] = [:]
+    init(appearance: PetAppearance = .shared) {
+        self.appearance = appearance
+        super.init()
+    }
+    private var values: [String: NSTextField] = [:]
+    func show() {
+        if let window { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 580),
+                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel.title = "外观"; panel.isReleasedWhenClosed = false; panel.level = .floating
+        window = panel
+        panel.delegate = self
+        let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14
+        stack.frame = NSRect(x: 24, y: 24, width: 392, height: 532)
+        panel.contentView?.addSubview(stack)
+        let hint = NSTextField(labelWithString: "实时保存；透明度仅影响背景，文字保持清晰。")
+        hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor; stack.addArrangedSubview(hint)
+        for (label, key, lower, upper, fallback) in [
+            ("桌宠大小", "petScale", 0.5, 2.0, 1.0),
+            ("对话框大小", "dialogScale", 0.5, 2.0, 1.0),
+            ("对话框不透明度", "dialogOpacity", 0.1, 1.0, 1.0),
+            ("按钮不透明度", "buttonOpacity", 0.1, 1.0, 1.0),
+            ("任务栏大小", "taskScale", 0.5, 2.0, 1.0),
+            ("任务栏不透明度", "taskOpacity", 0.1, 1.0, 0.9),
+            ("对话框间距偏移", "dialogGap", -80.0, 200.0, 0.0),
+            ("任务栏间距", "taskGap", 0.0, 200.0, 8.0)
+        ] {
+            let title = NSTextField(labelWithString: label); title.widthAnchor.constraint(equalToConstant: 112).isActive = true
+            let slider = NSSlider(value: Double(appearance.number(key, fallback: fallback)), minValue: lower, maxValue: upper, target: self, action: #selector(slide(_:)))
+            slider.identifier = NSUserInterfaceItemIdentifier(key); slider.isContinuous = true
+            sliders[key] = slider
+            slider.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            let value = NSTextField(labelWithString: formatted(key, slider.doubleValue))
+            value.widthAnchor.constraint(equalToConstant: 48).isActive = true; values[key] = value
+            stack.addArrangedSubview(NSStackView(views: [title, slider, value]))
+        }
+        var colors = NSStackView(); colors.spacing = 12
+        for (title, key, color) in [("对话框颜色", "dialogColor", appearance.dialogColor), ("任务栏颜色", "taskColor", appearance.taskColor),
+            ("对话框文字", "dialogTextColor", appearance.dialogTextColor ?? NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)),
+            ("按钮文字", "buttonTextColor", appearance.buttonTextColor ?? .white)] {
+            if key == "dialogTextColor" {
+                stack.addArrangedSubview(colors); colors = NSStackView(); colors.spacing = 12
+            }
+            colors.addArrangedSubview(NSTextField(labelWithString: title))
+            let well = NSColorWell(frame: NSRect(x: 0, y: 0, width: 44, height: 26))
+            well.color = color; well.identifier = NSUserInterfaceItemIdentifier(key)
+            colorWells[key] = well
+            if key == "dialogColor" { well.toolTip = "默认为原版奶油色至浅粉色渐变；选色后使用自定义颜色。" }
+            well.target = self; well.action = #selector(changeColor(_:)); colors.addArrangedSubview(well)
+        }
+        stack.addArrangedSubview(colors)
+        let dialog = NSButton(checkboxWithTitle: "预览对话框", target: self, action: #selector(togglePreview(_:)))
+        let tasks = NSButton(checkboxWithTitle: "预览任务栏", target: self, action: #selector(togglePreview(_:)))
+        dialogPreview = dialog; taskPreview = tasks
+        let previews = NSStackView(views: [dialog, tasks]); previews.spacing = 24
+        stack.addArrangedSubview(previews)
+        stack.addArrangedSubview(NSButton(title: "恢复默认", target: self, action: #selector(reset)))
+        panel.center(); panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+    @objc private func togglePreview(_ sender: NSButton) { updatePreview() }
+    private func updatePreview() {
+        onPreview?(dialogPreview?.state == .on, taskPreview?.state == .on, window?.frame ?? .zero)
+    }
+    func windowDidMove(_ notification: Notification) { updatePreview() }
+    func windowWillClose(_ notification: Notification) {
+        dialogPreview?.state = .off; taskPreview?.state = .off; updatePreview()
+    }
+    private func formatted(_ key: String, _ value: Double) -> String {
+        key.hasSuffix("Gap") ? "\(Int(value)) pt" : "\(Int(value * 100))%"
+    }
+    @objc private func slide(_ sender: NSSlider) {
+        guard let key = sender.identifier?.rawValue else { return }
+        appearance.set(key, sender.doubleValue); values[key]?.stringValue = formatted(key, sender.doubleValue); onChange?()
+    }
+    @objc private func changeColor(_ sender: NSColorWell) {
+        guard let key = sender.identifier?.rawValue else { return }
+        appearance.setColor(key, sender.color); onChange?()
+    }
+    @objc private func reset() {
+        appearance.reset()
+        for (key, slider) in sliders {
+            slider.doubleValue = Double(appearance.number(key, fallback: key == "dialogGap" ? 0 : key == "taskGap" ? 8 : key == "taskOpacity" ? 0.9 : 1))
+            values[key]?.stringValue = formatted(key, slider.doubleValue)
+        }
+        colorWells["dialogColor"]?.color = appearance.dialogColor
+        colorWells["taskColor"]?.color = appearance.taskColor
+        colorWells["dialogTextColor"]?.color = NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)
+        colorWells["buttonTextColor"]?.color = .white
+        onChange?()
+
     }
 }

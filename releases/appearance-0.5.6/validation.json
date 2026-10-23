@@ -1,0 +1,24 @@
+{
+  "baseline_commit": "1ff99b35d5ae790b51e2dc568747ca3eaeb7fbae",
+  "candidate_version": "0.5.6",
+  "candidate_build": "11",
+  "release_status": "unreleased handoff candidate",
+  "macos": "26.5 (25F71)",
+  "build_architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "executed_architecture": "arm64",
+  "checks": {
+    "macos_release": "passed",
+    "appearance": "passed",
+    "animation_scale": "passed",
+    "native_manifest": "passed",
+    "source_assets": "2167 RGBA frames, 21 animations, 640x640",
+    "windows_preservation": "11 Windows source blobs verified unchanged in staged Git tree (exact bytes), plus checkout content comparison",
+    "windows_native_performance": "not run: Python winreg is unavailable on macOS; source preserved, Windows 实机待验收",
+    "native_hidden_task_regression": "48 checks passed over four edges"
+  },
+  "recording": "native-playback.mp4 — native controller/control playback harness with synthetic update fixture; not Windows acceptance",
+  "windows_acceptance": "Windows 实机待验收"
+}

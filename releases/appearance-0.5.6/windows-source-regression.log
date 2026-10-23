@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/Users/ricey/.codex/worktrees/appearance-windows-handoff/桌宠猪 Window→Mac/tools/test_animation_performance.py", line 13, in <module>
+    import pig_pet as win
+  File "/Users/ricey/.codex/worktrees/appearance-windows-handoff/桌宠猪 Window→Mac/pig_pet.py", line 16, in <module>
+    import winreg
+ModuleNotFoundError: No module named 'winreg'

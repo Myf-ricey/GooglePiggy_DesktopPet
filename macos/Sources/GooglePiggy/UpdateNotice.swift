@@ -18,7 +18,7 @@ final class UpdateChecker {
     private var manualRequested = false
     private let session: URLSession
     init(session: URLSession = .shared) { self.session = session }
-    static let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.3"
+    static let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.5.2"
     static func version(_ value: String) -> [Int]? {
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
         guard (2...4).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy({ $0.isASCII && $0.isNumber }) }) else { return nil }
@@ -90,6 +90,7 @@ final class UpdateNotice {
     let result: UpdateResult
     let current: String
     let started = ProcessInfo.processInfo.systemUptime
+    var appearancePreview = false
     var pressed: String?
     var progressMessage: String?
     var progress: Double?
@@ -98,7 +99,9 @@ final class UpdateNotice {
     init(_ result: UpdateResult, current: String = UpdateChecker.currentVersion) { self.result = result; self.current = current }
     var release: PiggyRelease? { if case .available(let release) = result { return release }; return nil }
     var rect: NSRect { NSRect(x: 238, y: release == nil ? 190 : 112, width: 344, height: release == nil ? 146 : 224) }
-    var bounds: NSRect { rect.union(NSRect(x: 360, y: 332, width: 100, height: 100)) }
+    var dialogBounds: NSRect { NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height + 10) }
+    var petDecorationBounds: NSRect? { release == nil ? nil : NSRect(x: 360, y: 332, width: 100, height: 100) }
+    var bounds: NSRect { petDecorationBounds.map { dialogBounds.union($0) } ?? dialogBounds }
     var buttons: [String: NSRect] {
         if progressMessage != nil {
             return canCancel ? ["cancel": NSRect(x: rect.minX+20, y: rect.maxY-52, width: 304, height: 34)] : [:]
@@ -107,31 +110,41 @@ final class UpdateNotice {
         return ["dismiss": NSRect(x: rect.minX+20, y: rect.maxY-52, width: 142, height: 34),
                 "update": NSRect(x: rect.minX+182, y: rect.maxY-52, width: 142, height: 34)]
     }
-    func draw(time: TimeInterval? = nil) {
+    func draw(time: TimeInterval? = nil, backgroundColor: NSColor? = nil, backgroundOpacity: CGFloat = 1, buttonOpacity: CGFloat = 1, textColor: NSColor? = nil, buttonTextColor: NSColor? = nil, includePetDecoration: Bool = true) {
         let elapsed = time ?? ProcessInfo.processInfo.systemUptime-started
-        let ink = NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)
+        let dark = (backgroundColor?.usingColorSpace(.sRGB).map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 } ?? 1) < 0.45
+        let ink = dark ? NSColor.white : NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)
         let rose = NSColor(calibratedRed: 0.64, green: 0.38, blue: 0.44, alpha: 1)
         let green = NSColor(calibratedRed: 0.27, green: 0.57, blue: 0.38, alpha: 1)
         func text(_ string: String, _ box: NSRect, _ size: CGFloat, _ weight: NSFont.Weight = .regular, _ color: NSColor? = nil) {
             let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 4; paragraph.lineBreakMode = .byTruncatingTail
-            NSAttributedString(string: string, attributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color ?? ink, .paragraphStyle: paragraph]).draw(with: box, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            NSAttributedString(string: string, attributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: textColor ?? color ?? ink, .paragraphStyle: paragraph]).draw(with: box, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
         let path = NSBezierPath(roundedRect: rect, xRadius: 20, yRadius: 20)
         let tail = NSBezierPath(); tail.move(to: NSPoint(x: 400,y:rect.maxY-1)); tail.line(to:NSPoint(x:410,y:rect.maxY+10)); tail.line(to:NSPoint(x:420,y:rect.maxY-1)); tail.close()
         NSGraphicsContext.saveGraphicsState()
+        let backgroundContext = NSGraphicsContext.current?.cgContext
+        backgroundContext?.setAlpha(backgroundOpacity)
+        backgroundContext?.beginTransparencyLayer(auxiliaryInfo: nil)
+        NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.14); shadow.shadowBlurRadius = 16; shadow.shadowOffset = NSSize(width:0,height:-4); shadow.set()
-        NSColor(calibratedRed:0.99,green:0.95,blue:0.94,alpha:1).setFill(); path.fill()
+        (backgroundColor ?? NSColor(calibratedRed:0.99,green:0.95,blue:0.94,alpha:1)).setFill(); path.fill()
         NSGraphicsContext.restoreGraphicsState()
-        NSGradient(starting:NSColor(calibratedRed:1,green:0.98,blue:0.95,alpha:1),ending:NSColor(calibratedRed:0.985,green:0.90,blue:0.92,alpha:1))!.draw(in:path,angle:70)
+        NSGradient(starting:backgroundColor ?? NSColor(calibratedRed:1,green:0.98,blue:0.95,alpha:1),ending:backgroundColor ?? NSColor(calibratedRed:0.985,green:0.90,blue:0.92,alpha:1))!.draw(in:path,angle:70)
         let border = NSColor(calibratedRed:0.88,green:0.59,blue:0.67,alpha:0.92)
         border.setStroke(); path.lineWidth=2; path.stroke()
-        NSColor(calibratedRed:0.985,green:0.91,blue:0.92,alpha:1).setFill(); tail.fill()
+        (backgroundColor ?? NSColor(calibratedRed:0.985,green:0.91,blue:0.92,alpha:1)).setFill(); tail.fill()
         let sides = NSBezierPath(); sides.move(to:NSPoint(x:400,y:rect.maxY)); sides.line(to:NSPoint(x:410,y:rect.maxY+10)); sides.line(to:NSPoint(x:420,y:rect.maxY)); sides.lineWidth=2; sides.stroke()
-        text("猪猪桌宠 · 软件更新", NSRect(x:rect.minX+20,y:rect.minY+16,width:304,height:18),11,.medium,rose)
+        backgroundContext?.endTransparencyLayer()
+        NSGraphicsContext.restoreGraphicsState()
+        text(appearancePreview ? "猪猪桌宠 · 对话框预览" : "猪猪桌宠 · 软件更新", NSRect(x:rect.minX+20,y:rect.minY+16,width:304,height:18),11,.medium,dark ? .white : rose)
         if let release {
             text(installationError != nil ? "更新未完成" : progressMessage != nil ? "正在更新到 \(release.version)" : "检测到有新版本 \(release.version)",NSRect(x:rect.minX+20,y:rect.minY+43,width:304,height:24),17,.semibold)
             text(installationError ?? progressMessage ?? release.notes,NSRect(x:rect.minX+20,y:rect.minY+78,width:304,height:64),13)
             if progressMessage != nil {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current?.cgContext.setAlpha(backgroundOpacity)
+                NSGraphicsContext.current?.cgContext.beginTransparencyLayer(auxiliaryInfo: nil)
                 let bar=NSRect(x:rect.minX+20,y:rect.minY+135,width:304,height:6)
                 NSColor(calibratedWhite:0.85,alpha:1).setFill()
                 NSBezierPath(roundedRect:bar,xRadius:3,yRadius:3).fill()
@@ -139,24 +152,32 @@ final class UpdateNotice {
                 let width=progress.map { CGFloat(min(1,max(0,$0)))*bar.width } ?? 60
                 let offset=progress == nil ? CGFloat((sin(elapsed*2)+1)/2)*(bar.width-width) : 0
                 NSBezierPath(roundedRect:NSRect(x:bar.minX+offset,y:bar.minY,width:width,height:bar.height),xRadius:3,yRadius:3).fill()
+                NSGraphicsContext.current?.cgContext.endTransparencyLayer()
+                NSGraphicsContext.restoreGraphicsState()
             }
             text(progressMessage != nil ? "完成后会自动重启，设置和任务数据会保留。" : "是否选择更新版本：\(current)→\(release.version)",NSRect(x:rect.minX+20,y:rect.minY+146,width:304,height:20),12,.medium)
         } else {
             let title: String
-            if case .current = result { title = "当前已是最新版本啦！" } else { title = "暂时无法检查更新，请稍后重试" }
+            if appearancePreview { title = "这是示例对话，调整外观即可查看效果。" }
+            else if case .current = result { title = "当前已是最新版本啦！" } else { title = "暂时无法检查更新，请稍后重试" }
             text(title,NSRect(x:rect.minX+20,y:rect.minY+47,width:304,height:25),release == nil && title.count > 16 ? 15 : 17,.semibold)
         }
         for (action,box) in buttons {
             let primary = action == "update" || release == nil
             let adjusted = box.offsetBy(dx:0,dy:pressed == action ? 1 : 0)
-            (primary ? green : NSColor(calibratedWhite:0.89,alpha:1)).setFill()
+            (primary ? green : NSColor(calibratedWhite:0.89,alpha:1)).withAlphaComponent(buttonOpacity).setFill()
             NSBezierPath(roundedRect:adjusted,xRadius:10,yRadius:10).fill()
             let label = action == "cancel" ? "取消下载" : action == "update" ? (installationError == nil ? "更新" : "重试") : release == nil ? "收到！" : "稍后再说"
-            let attributes: [NSAttributedString.Key:Any] = [.font:NSFont.systemFont(ofSize:13,weight:.semibold),.foregroundColor:primary ? NSColor.white : ink]
+            let attributes: [NSAttributedString.Key:Any] = [.font:NSFont.systemFont(ofSize:13,weight:.semibold),.foregroundColor:buttonTextColor ?? (primary ? NSColor.white : NSColor.darkGray)]
             let size = (label as NSString).size(withAttributes:attributes)
             (label as NSString).draw(at:NSPoint(x:adjusted.midX-size.width/2,y:adjusted.midY-size.height/2),withAttributes:attributes)
         }
-        if release != nil { drawBulb(elapsed) }
+        if includePetDecoration { drawPetDecoration(time: elapsed) }
+    }
+    // Called in the sprite coordinate system, outside dialogue scale/opacity.
+    func drawPetDecoration(time: TimeInterval? = nil) {
+        guard release != nil else { return }
+        drawBulb(time ?? ProcessInfo.processInfo.systemUptime-started)
     }
     private func drawBulb(_ elapsed: TimeInterval) {
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
