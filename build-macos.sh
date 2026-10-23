@@ -148,8 +148,21 @@ else
         print -u2 "Install Keka or set KEKA_CLI to its Keka executable."
         exit 1
     fi
-    (cd "$BUILD_ROOT" && "$KEKA_CLI" --ignore-file-access --cli 7zz a -tzip -snl "$ZIP_PATH" "$RELEASE_NAME")
-    "$KEKA_CLI" --ignore-file-access --cli 7zz t "$ZIP_PATH"
+    if [[ "${CI:-}" == "true" ]]; then
+        # A fresh Keka installation can only read its own sandbox container.
+        # Stage there instead of requiring interactive file-access grants on runners.
+        KEKA_CONTAINER="$HOME/Library/Containers/com.aone.keka/Data"
+        mkdir -p "$KEKA_CONTAINER"
+        KEKA_STAGE=$(mktemp -d "$KEKA_CONTAINER/googlepiggy-release.XXXXXX")
+        /usr/bin/ditto "$RELEASE_DIR" "$KEKA_STAGE/$RELEASE_NAME"
+        (cd "$KEKA_STAGE" && "$KEKA_CLI" --ignore-file-access --cli 7zz a -tzip -snl "$KEKA_STAGE/release.zip" "$RELEASE_NAME")
+        "$KEKA_CLI" --ignore-file-access --cli 7zz t "$KEKA_STAGE/release.zip"
+        /bin/cp "$KEKA_STAGE/release.zip" "$ZIP_PATH"
+        /bin/rm -rf "$KEKA_STAGE"
+    else
+        (cd "$BUILD_ROOT" && "$KEKA_CLI" --cli 7zz a -tzip -snl "$ZIP_PATH" "$RELEASE_NAME")
+        "$KEKA_CLI" --cli 7zz t "$ZIP_PATH"
+    fi
 fi
 
 if [[ "${BUILD_DMG:-1}" == "1" ]]; then
