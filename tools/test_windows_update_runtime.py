@@ -38,6 +38,8 @@ def main():
     target=root/'安装目录'; shutil.copytree(old,target)
     state=root/'state'; state.mkdir()
     status=state/'codex-status.json'; heartbeat=state/'pig-heartbeat.json'
+    appearance={'petScale':1.25,'dialogScale':.8,'taskGap':42,'dialogColor':'#fedcba'}
+    atomic_json(state/'appearance.json',appearance)
     make_manifest(target,old_version)
     (target/'user-settings.json').write_text('preserve user settings',encoding='utf-8')
     # Isolation is passed to restarted processes by the real helper.
@@ -77,8 +79,11 @@ def main():
         h=until(lambda:hmatch(version=APP_VERSION,window_visible=True) if read(heartbeat).get('pid')!=process.pid else None)
         current_pid=h['pid']
         assert process.wait(timeout=5)==0
+        assert read(state/'appearance.json')==appearance
+        assert h['appearance']['petScale']==1.25
         assert (Path(result['backup'])/'pig_pet.exe').exists()
         assert (target/'user-settings.json').read_text(encoding='utf-8')=='preserve user settings'
+        assert read(state/'appearance.json')==appearance
         passed.append('Copied helper waits for exact EXE, backs up, replaces, restarts and preserves extra settings')
         # Manifest is valid but this synthetic payload cannot execute: real
         # CreateProcess failure must restore the complete previous installation.
@@ -92,6 +97,7 @@ def main():
         h=until(lambda:hmatch(version=APP_VERSION,window_visible=True) if read(heartbeat).get('pid')!=old_pid else None)
         current_pid=h['pid']
         assert (target/'user-settings.json').read_text(encoding='utf-8')=='preserve user settings'
+        assert read(state/'appearance.json')==appearance
         passed.append('Real restart failure restores previous EXE and relaunches it')
         command('exit')
         time.sleep(1)

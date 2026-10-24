@@ -2521,6 +2521,7 @@ class PigPet:
         pixels: bytes,
         width: int,
         height: int,
+        origin: tuple[int, int] | None = None,
     ) -> None:
         screen_dc = user32.GetDC(None)
         memory_dc = gdi32.CreateCompatibleDC(screen_dc)
@@ -2552,7 +2553,7 @@ class PigPet:
             gdi32.DeleteDC(memory_dc)
             user32.ReleaseDC(None, screen_dc)
             return
-        destination = POINT(position.left, position.top)
+        destination = POINT(*(origin if origin is not None else (position.left, position.top)))
         source = POINT(0, 0)
         size = SIZE(width, height)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)

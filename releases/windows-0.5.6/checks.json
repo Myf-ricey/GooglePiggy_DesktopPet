@@ -1,0 +1,24 @@
+{
+  "build": "20261024.3-task-text-color",
+  "user_accepted": true,
+  "scope": [
+    "independent pet/dialog/task appearance",
+    "task text color including empty list and previews",
+    "atomic position and bitmap submission",
+    "all-state task navigation",
+    "settings preserved during upgrade"
+  ],
+  "native_jitter_before_px": 30,
+  "native_jitter_after_px": 0,
+  "asset_files_identical_to_handoff": 2194,
+  "physical_environment": "Windows 11 26100, single 2560x1600 display at 150% DPI",
+  "limitations": [
+    "Physical multiple monitors and other DPI displays not tested",
+    "200% update notice with three children ~24.5 submissions/sec, input remains responsive"
+  ],
+  "unit_tests": 76,
+  "unit_tests_passed": true,
+  "hook_selftest": "passed",
+  "smoke": "passed",
+  "baseline": "46edac0feb9a2107793d4d71cd5c01d7571cbc7f"
+}

@@ -17,16 +17,17 @@ from codex_observer import CodexObserver
 from leisure import Leisure
 from codex_bridge import atomic_json
 from windows_update import Checker, Installer, prepare_helper, Release, validate_tree
-from update_notice import UpdateNotice
+from update_notice import UpdateNotice, bulb_sprite
 from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
+from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.5-windows'
-APP_BUILD = '20261019.5-input-release'
+APP_VERSION = '0.5.6-windows'
+APP_BUILD = '20261024.3-task-text-color'
 
 
-@lru_cache(maxsize=4)
-def permission_surface(rect):
+@lru_cache(maxsize=16)
+def permission_surface(rect, color=None, alpha=1):
     left,top,right,bottom = rect
     height = bottom-top
     mask_large = Image.new('L',(1920,1920))
@@ -48,7 +49,9 @@ def permission_surface(rect):
     border = Image.new('RGBA',(640,640),(231,169,188,255))
     canvas.alpha_composite(Image.composite(border,Image.new('RGBA',(640,640)),mask))
     canvas.alpha_composite(Image.composite(gradient,Image.new('RGBA',(640,640)),inside))
-    return canvas
+    if color:
+        canvas.alpha_composite(Image.composite(Image.new('RGBA',(640,640),color),Image.new('RGBA',(640,640)),inside))
+    return opacity(canvas, alpha)
 
 
 def union(rects):
@@ -111,6 +114,24 @@ def family_tail_rects(edge, main, screen, count, scale=1):
 
 class WindowsPet(win.PigPet):
     def __init__(self, animations, report_path, app_dir, status_path, observe=True):
+        self.appearance = Appearance(status_path.parent/'appearance.json')
+        # Prepare the small decorative cycle before the animation timer starts.
+        # No rotation/blur work is repeated in the 20ms presentation loop.
+        for level in range(33):
+            bulb_sprite(level)
+        for rect in ((238,112,582,336),(238,190,582,336)):
+            permission_surface(rect,self.appearance.dialogColor,self.appearance.dialogOpacity)
+        self.appearance_events = queue.Queue()
+        self.appearance_window = None
+        self.appearance_dirty = 0
+        self.preview_dialog = self.preview_task = False
+        self.canvas_offset = (0, 0)
+        self.pending_origin_delta = (0, 0)
+        self.update_bounds, self.update_buttons = None, {}
+        self.preview_dialog_rect = self.preview_task_rect = None
+        self.dialog_cache_key, self.dialog_cache = None, None
+        self.render_layers = []
+        self.physical_ui_cache = {}
         self.store = FamilyStore()
         self.observer = CodexObserver(self.store,status_path.parent,enabled=observe)
         if observe:
@@ -328,6 +349,7 @@ class WindowsPet(win.PigPet):
         self.frame_index = self.position[1]
 
     def _advance(self):
+        self._poll_appearance()
         self._qa_control()
         self._poll_bridge()
         self._poll_update()
@@ -336,6 +358,42 @@ class WindowsPet(win.PigPet):
         self._render_current()
         self._write_heartbeat()
         self._schedule_current()
+
+    def _show_appearance(self):
+        if self.appearance_window and self.appearance_window.alive:
+            self.appearance_window.show()
+        else:
+            from appearance_window import AppearanceWindow
+            self.appearance_window = AppearanceWindow(self.appearance.values, self.appearance_events)
+
+    def _poll_appearance(self):
+        if self.appearance_window:
+            self.appearance_window.update()
+        changed = False
+        while True:
+            try:
+                kind, value = self.appearance_events.get_nowait()
+            except queue.Empty:
+                break
+            if kind == 'values':
+                self.appearance.update(value)
+                self.appearance_dirty = time.monotonic()
+            elif kind == 'preview':
+                setattr(self, 'preview_'+value[0], value[1])
+            elif kind == 'closed':
+                self.preview_dialog = self.preview_task = False
+                self.selector_visible = False
+                self.appearance_window = None
+            changed = True
+        if self.appearance_dirty and time.monotonic()-self.appearance_dirty >= .25:
+            self.appearance.save()
+            self.appearance_dirty = 0
+        if changed:
+            self.compose()
+            if self.edge_placement and not self.edge_transition:
+                self._show_tail(self.edge_placement)
+            else:
+                self._fit_update_notice()
 
     def _qa_control(self):
         # Explicit isolated developer mode; never reads commands in production.
@@ -377,6 +435,15 @@ class WindowsPet(win.PigPet):
             target = self.status_path.parent/'captures'
             target.mkdir(exist_ok=True)
             self.compose().save(target/(str(len(self.qa_commands))+'.png'))
+        elif action == 'appearance':
+            self.appearance_events.put(('values',command.get('values',{})))
+            for key in ('dialog','task'):
+                if key in command:
+                    self.appearance_events.put(('preview',(key,bool(command[key]))))
+        elif action == 'appearance-open':
+            self._show_appearance()
+        elif action == 'appearance-close' and self.appearance_window:
+            self.appearance_window.close()
         elif action == 'update-preview':
             release = Release('0.5.2','• 更新体验更顺畅\n• 修复后台内部会话误触发','', '', 1, '')
             self.update_notice = UpdateNotice(release if command.get('kind','available')=='available' else None,
@@ -404,7 +471,7 @@ class WindowsPet(win.PigPet):
                 win.user32.SetTimer(self.hwnd,self.timer_id,20,None)
             self.animation_timer_started = True
 
-    def compose(self,key=None,index=None):
+    def compose(self,key=None,index=None,native=False):
         now = self.animation_sample_time if self.animation_sample_time is not None else time.monotonic()
         key, index = (key,index) if key is not None else self.position
         canvas = self.animations[key].frames[index].copy()
@@ -442,9 +509,8 @@ class WindowsPet(win.PigPet):
                 child_key,child_index = pos
                 if child_key == 'carrot':
                     child_index = self.animations['carrot'].frame(max(0,time.time()-node.changed)*1.25)
-            sprite = self.animations[child_key].frames[child_index]
             # Keep the whole artwork coordinate system while resizing; no frame-by-frame centering.
-            sprite = resize_alpha(sprite,(261,307))
+            sprite = self._child_sprite(child_key, child_index)
             if self.dragging and (int((now-self.visual_epoch)/.6)+i)%2:
                 sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
                 anchor_x = 261-410*.408
@@ -457,14 +523,78 @@ class WindowsPet(win.PigPet):
                 self.child_rects[node.id] = tuple(bounds[j]+origin[j%2] for j in range(4))
         if len(children)>3:
             ImageDraw.Draw(canvas).text((540,570),'+'+str(len(children)-3),font=win.load_ui_font(16,True),fill=(96,84,88,255))
-        if self.selector_visible:
-            self._composite_selector(canvas)
-        if self.permission_request:
-            self._composite_permission_bubble(canvas)
+        pet_transform, dialog_transform, task_transform = transforms(self.appearance)
+        self.pet_rect = pet_transform.rect(canvas.getbbox() or (334,436,486,570))
+        self.child_rects = {actor: pet_transform.rect(rect) for actor,rect in self.child_rects.items()}
+        if self.update_notice and not self.permission_request:
+            self.update_notice.draw_decoration(canvas, self.reduced_motion)
+        layers = [(canvas, pet_transform)]
+        self.preview_dialog_rect = self.preview_task_rect = None
+        if self.selector_visible or self.preview_task:
+            layer = Image.new('RGBA',(640,640))
+            self._composite_selector(layer, preview=self.preview_task)
+            self.selector_rect = task_transform.rect(self.selector_rect)
+            self.selector_rows = [(task_transform.rect(rect), actor) for rect,actor in self.selector_rows]
+            if self.preview_task:
+                self.preview_task_rect = self.selector_rect
+            layers.append((layer, task_transform))
+        else:
+            self.selector_rect, self.selector_rows = None, []
+        self.update_bounds, self.update_buttons = None, {}
+        if self.permission_request or self.preview_dialog:
+            layer = Image.new('RGBA',(640,640))
+            preview = self.preview_dialog and not self.permission_request
+            self._composite_permission_bubble(layer, preview=preview)
+            self.permission_bubble_rect = dialog_transform.rect(self.permission_bubble_rect)
+            self.permission_buttons = {k: dialog_transform.rect(v) for k,v in self.permission_buttons.items()}
+            if preview:
+                self.preview_dialog_rect = self.permission_bubble_rect
+                self.permission_buttons = {}
+            layers.append((layer, dialog_transform))
         elif self.update_notice:
-            self.update_notice.draw(canvas,APP_VERSION.removesuffix('-windows'),win.load_ui_font,permission_surface,win.wrap_text_by_width,self.reduced_motion)
+            notice = self.update_notice
+            cache_key = (id(notice), notice.phase, notice.error, notice.progress,
+                         tuple(self.appearance.values.items()),
+                         int(now*10) if notice.phase in {'downloading','verifying','ready','installing'} else 0)
+            if cache_key != self.dialog_cache_key:
+                layer = Image.new('RGBA',(640,640))
+                notice.draw(layer,APP_VERSION.removesuffix('-windows'),win.load_ui_font,self._dialog_surface,win.wrap_text_by_width,self.reduced_motion,appearance=self.appearance,decoration=False)
+                self.dialog_cache_key, self.dialog_cache = cache_key, layer
+            layer = self.dialog_cache
+            self.update_bounds = dialog_transform.rect(self.update_notice.rect)
+            self.update_buttons = {k: dialog_transform.rect(v) for k,v in self.update_notice.buttons.items()}
+            layers.append((layer, dialog_transform))
+        # Stable canvas for a given appearance, independent of frame or hover.
+        # Coordinates remain in world units; only this final canvas has an offset.
+        extent = union([(0,0,640,640)] + [t.rect((0,0,640,640)) for t in (pet_transform,dialog_transform,task_transform)])
+        custom_scale = any(self.appearance.values[k] != 1 for k in ('petScale','dialogScale','taskScale'))
+        if custom_scale:
+            # Reserve all pet artwork/decorations/child slots, but do not submit
+            # thousands of transparent pixels introduced by transformed UI canvases.
+            bounds = [pet_transform.rect((250,330,570,640))]
+            bounds.extend(t.rect(layer.getbbox()) for layer,t in layers if layer.getbbox())
+            extent = union(bounds)
+            extent = (math.floor((extent[0]-4)/4)*4, math.floor((extent[1]-4)/4)*4,
+                      math.ceil((extent[2]+4)/4)*4, math.ceil((extent[3]+4)/4)*4)
+        offset = (-extent[0],-extent[1])
+        if offset != self.canvas_offset and self.hwnd:
+            delta = tuple(round(a*self.scale)-round(b*self.scale) for a,b in zip(self.canvas_offset,offset))
+            self.pending_origin_delta = tuple(a+b for a,b in zip(self.pending_origin_delta,delta))
+        self.canvas_offset = offset
+        self.canvas_size = (extent[2]-extent[0],extent[3]-extent[1])
+        self.render_layers = layers
+        if native and custom_scale:
+            self.last_canvas = None
+            return
+        canvas = Image.new('RGBA',(extent[2]-extent[0],extent[3]-extent[1]))
+        for layer, transform in layers:
+            transform.paste(canvas, layer, offset)
         self.last_canvas = canvas
         return canvas
+
+    @lru_cache(maxsize=128)
+    def _child_sprite(self, key, index):
+        return resize_alpha(self.animations[key].frames[index], (261,307))
 
     def _frame_bytes(self,key,index):
         return win.premultiplied_bgra(self.compose(key,index))
@@ -472,10 +602,10 @@ class WindowsPet(win.PigPet):
     def _render_current(self):
         if self.hwnd is None:
             return
-        self.compose(self.current_key,self.frame_index)
+        self.compose(self.current_key,self.frame_index,native=True)
         # Convert only the final DPI-sized image. The old path converted the
         # 640px canvas and then discarded those bytes at non-100% DPI.
-        self._render_layered_window(self.hwnd,None,640,640)
+        self._render_layered_window(self.hwnd,None,*self.canvas_size)
 
     def run(self):
         # Per-monitor awareness must precede the first HWND. Coordinates passed
@@ -487,7 +617,9 @@ class WindowsPet(win.PigPet):
         super().run()
 
     def _render_layered_window(self,hwnd,pixels,width,height):
+        origin = None
         if hwnd == self.hwnd:
+            old_scale = self.scale
             try:
                 get_dpi = win.user32.GetDpiForWindow
                 get_dpi.argtypes = [win.wintypes.HWND]
@@ -495,49 +627,103 @@ class WindowsPet(win.PigPet):
                 self.scale = (get_dpi(hwnd) or 96)/96
             except AttributeError:
                 self.scale = 1
+            if self.scaled_once and self.scale != old_scale:
+                delta = tuple(round((v+off)*old_scale)-round((v+off)*self.scale) for v,off in zip((410,570),self.canvas_offset))
+                self.pending_origin_delta = tuple(a+b for a,b in zip(self.pending_origin_delta,delta))
             # compose() is straight-alpha; feed exactly one premultiplication.
-            if self.scale != 1 and self.last_canvas is not None:
+            if self.last_canvas is None:
+                width,height = round(width*self.scale),round(height*self.scale)
+                physical = Image.new('RGBA',(width,height))
+                for i,(layer,transform) in enumerate(self.render_layers):
+                    bounds = layer.getbbox()
+                    if not bounds:
+                        continue
+                    target = self._physical_bounds(transform.rect(bounds))
+                    size = (max(1,target[2]-target[0]),max(1,target[3]-target[1]))
+                    cache_key = (id(layer),size)
+                    cached = self.physical_ui_cache.get(cache_key) if i else None
+                    if cached and cached[0] is layer:
+                        sprite = cached[1]
+                    else:
+                        sprite = resize_alpha(layer.crop(bounds),size)
+                        if i:
+                            if len(self.physical_ui_cache)>=4:
+                                self.physical_ui_cache.clear()
+                            self.physical_ui_cache[cache_key]=(layer,sprite)
+                    physical.alpha_composite(sprite,target[:2])
+                pixels = win.premultiplied_bgra(physical)
+            elif self.scale != 1:
                 width,height = round(width*self.scale),round(height*self.scale)
                 pixels = scaled_frame_bytes(self.last_canvas,(width,height))
             elif pixels is None:
                 pixels = win.premultiplied_bgra(self.last_canvas)
             if not self.scaled_once:
-                rect = self._window_rect(hwnd)
-                if rect:
-                    self._set_window_origin(hwnd,(rect[0]+640-width,rect[1]+640-height))
+                self.pending_origin_delta = tuple(a+b for a,b in zip(self.pending_origin_delta,(640-width,640-height)))
                 self.scaled_once = True
-        super()._render_layered_window(hwnd,pixels,width,height)
+            rect = self._window_rect(hwnd)
+            if rect:
+                origin = tuple(a+b for a,b in zip(rect[:2],self.pending_origin_delta))
+                if self.drag_start_window:
+                    self.drag_start_window = tuple(a+b for a,b in zip(self.drag_start_window,self.pending_origin_delta))
+        # UpdateLayeredWindow submits destination and pixels in ONE operation.
+        # Moving the HWND first would show the old bitmap at the new origin.
+        if origin is None:
+            super()._render_layered_window(hwnd,pixels,width,height)
+        else:
+            super()._render_layered_window(hwnd,pixels,width,height,origin)
+            self.pending_origin_delta = (0, 0)
+
+    def _screen_bounds_for_local(self, local_bounds):
+        rect = self._window_rect(self.hwnd)
+        if rect is None:
+            return None
+        origin = tuple(a+b for a,b in zip(rect[:2],self.pending_origin_delta))
+        return tuple(v+origin[i%2] for i,v in enumerate(local_bounds))
 
     def _cursor_window_position(self):
         point = super()._cursor_window_position()
-        return (round(point[0]/self.scale),round(point[1]/self.scale)) if point else None
+        return (round(point[0]/self.scale-self.canvas_offset[0]),round(point[1]/self.scale-self.canvas_offset[1])) if point else None
 
-    def _composite_selector(self,canvas):
+    def _composite_selector(self,canvas,preview=False):
         roots = self.store.roots(time.time())
+        if preview:
+            from types import SimpleNamespace
+            roots = [SimpleNamespace(id='', title=title, unread=i==1) for i,title in enumerate(('预览 · 正在整理任务','预览 · 已完成的对话','预览 · 等待你的确认'))]
         count = max(1,min(6,len(roots)))
         left,bottom,width,height = 270,425,280,count*34+12
         top = bottom-height
         self.selector_rect = (left,top,left+width,bottom)
         draw = ImageDraw.Draw(canvas)
-        draw.rounded_rectangle(self.selector_rect,12,fill=(220,218,222,237),outline=(245,242,245,245),width=1)
+        background = Image.new('RGBA',canvas.size)
+        ImageDraw.Draw(background).rounded_rectangle(self.selector_rect,12,fill=self.appearance.color('taskColor',(220,218,222,255)),outline=(245,242,245,255),width=1)
         self.selector_scroll = min(self.selector_scroll,max(0,len(roots)-6))
+        visible_roots = roots[self.selector_scroll:self.selector_scroll+6]
+        for i,node in enumerate(visible_roots):
+            if node.id and node.id == self.store.selected:
+                selected = Image.new('RGBA',canvas.size)
+                ImageDraw.Draw(selected).rounded_rectangle((left+6,top+6+i*34,left+width-6,top+40+i*34),7,fill=(245,240,246,235))
+                background.alpha_composite(selected)
+        canvas.alpha_composite(opacity(background,self.appearance.taskOpacity))
+        draw = ImageDraw.Draw(canvas)
         self.selector_rows = []
         font = win.load_ui_font(14)
         if not roots:
-            draw.text((left+18,top+12),'当前好像没有任务唔～',font=font,fill=(95,89,96,255))
-        for i,node in enumerate(roots[self.selector_scroll:self.selector_scroll+6]):
+            draw.text((left+18,top+12),'当前好像没有任务唔～',font=font,fill=self.appearance.color('taskTextColor',(95,89,96,255)))
+        for i,node in enumerate(visible_roots):
             rect = (left+6,top+6+i*34,left+width-6,top+40+i*34)
-            if node.id == self.store.selected:
-                draw.rounded_rectangle(rect,7,fill=(245,240,246,235))
             if node.unread:
                 draw.ellipse((left+12,rect[1]+13,left+19,rect[1]+20),fill=(47,137,229,255))
             title = node.title
             while title and draw.textlength(title,font=font)>width-48:
                 title = title[:-2]+'…' if not title.endswith('…') else title[:-2]+'…'
-            draw.text((left+28,rect[1]+7),title,font=font,fill=(78,72,80,255))
-            self.selector_rows.append((rect,node.id))
+            draw.text((left+28,rect[1]+7),title,font=font,fill=self.appearance.color('taskTextColor',(78,72,80,255)))
+            if not preview:
+                self.selector_rows.append((rect,node.id))
 
     def _update_hover(self):
+        if self.preview_task:
+            self.selector_visible = True
+            return
         if self.update_notice or self.permission_request:
             self.selector_visible = False
             return
@@ -545,7 +731,10 @@ class WindowsPet(win.PigPet):
         if point and self.edge_placement is None and not self.dragging:
             hit = self._point_in_rect(point,self._logical_pet_bounds()) or self._point_in_rect(point,self.selector_rect if self.selector_visible else None)
             # The small corridor connects pig head and fixed panel without flicker.
-            hit = hit or self.selector_visible and self._point_in_rect(point,(270,420,550,445))
+            if self.selector_visible and self.selector_rect:
+                body = self._logical_pet_bounds()
+                corridor = (min(body[0],self.selector_rect[0]),self.selector_rect[3]-4,max(body[2],self.selector_rect[2]),body[1]+12)
+                hit = hit or self._point_in_rect(point,corridor)
             if hit:
                 self.selector_visible,self.selector_last_hover = True,time.monotonic()
             elif time.monotonic()-self.selector_last_hover >= .4:
@@ -553,10 +742,13 @@ class WindowsPet(win.PigPet):
         else:
             self.selector_visible = False
 
-    def _composite_permission_bubble(self,canvas):
+    def _dialog_surface(self, rect):
+        return permission_surface(rect, self.appearance.dialogColor, self.appearance.dialogOpacity)
+
+    def _composite_permission_bubble(self,canvas,preview=False):
         draw = ImageDraw.Draw(canvas)
         font, title_font = win.load_ui_font(14),win.load_ui_font(11)
-        request = self.permission_request
+        request = {'summary':'这是外观预览。你可以调整对话框大小、颜色、距离与不透明度。'} if preview else self.permission_request
         detail = str(request.get('summary') or 'Codex 请求权限')
         if detail != self.permission_lines_key:
             self.permission_lines_key = detail
@@ -568,24 +760,27 @@ class WindowsPet(win.PigPet):
         left,right,bottom,top = 250,570,348,348-height
         rect = (left,top,right,bottom)
         self.permission_bubble_rect = (left,top,right,bottom+10)
-        canvas.alpha_composite(permission_surface(rect))
+        canvas.alpha_composite(self._dialog_surface(rect))
         draw = ImageDraw.Draw(canvas)
         rose = (176,124,129,255)
         draw.ellipse((left+20,top+21,left+26,top+27),fill=rose)
-        draw.text((left+34,top+17),'CODEX · 需要你的确认',font=title_font,fill=rose)
+        draw.text((left+34,top+17),'外观预览 · 示例对话框' if preview else 'CODEX · 需要你的确认',font=title_font,fill=self.appearance.color('dialogTextColor',rose))
         for i,line in enumerate(visible):
-            draw.text((left+20,top+43+i*20),line,font=font,fill=(76,67,70,255))
+            draw.text((left+20,top+43+i*20),line,font=font,fill=self.appearance.color('dialogTextColor',(76,67,70,255)))
         long = len(lines)>11
-        if not long or self.permission_page+11 >= len(lines):
+        if not preview and (not long or self.permission_page+11 >= len(lines)):
             self.permission_viewed.add(self.permission_request_id)
         button_y = bottom-48
         buttons = {'deny':(left+20,button_y,left+120,bottom-16),'allow':(right-136,button_y,right-20,bottom-16)}
         self.permission_buttons = buttons
         for action,button in buttons.items():
-            disabled = action == 'allow' and self.permission_request_id not in self.permission_viewed
+            disabled = not preview and action == 'allow' and self.permission_request_id not in self.permission_viewed
             fill = (223,207,214,255) if disabled else rose if action == 'allow' else (242,238,231,255)
-            draw.rounded_rectangle(button,10,fill=fill)
-            draw.text(((button[0]+button[2])/2,(button[1]+button[3])/2),{'allow':'允许一次','deny':'拒绝'}[action],font=win.load_ui_font(13),anchor='mm',fill=(255,255,255,255) if action=='allow' and not disabled else (82,76,76,255))
+            button_layer = Image.new('RGBA',canvas.size)
+            ImageDraw.Draw(button_layer).rounded_rectangle(button,10,fill=fill)
+            canvas.alpha_composite(opacity(button_layer,self.appearance.buttonOpacity))
+            draw = ImageDraw.Draw(canvas)
+            draw.text(((button[0]+button[2])/2,(button[1]+button[3])/2),{'allow':'允许一次','deny':'拒绝'}[action],font=win.load_ui_font(13),anchor='mm',fill=self.appearance.color('buttonTextColor',(255,255,255,255) if action=='allow' and not disabled else (82,76,76,255)))
 
     def _write_permission_decision(self,decision):
         if decision == 'allow' and self.permission_request_id not in self.permission_viewed:
@@ -597,21 +792,30 @@ class WindowsPet(win.PigPet):
 
     def _logical_pet_bounds(self):
         frame = self.animations[self.position[0]].frames[self.position[1]]
-        rects = [frame.getbbox() or (334,436,486,570)]
+        rects = [transforms(self.appearance)[0].rect(frame.getbbox() or (334,436,486,570))]
         rects.extend(self.child_rects.values())
         return union(rects)
 
     def _current_pet_local_bounds(self):
-        return tuple(round(v*self.scale) for v in self._logical_pet_bounds())
+        return self._physical_bounds(self._logical_pet_bounds())
+
+    def _physical_bounds(self, rect):
+        return tuple(round((v+self.canvas_offset[i%2])*self.scale) for i,v in enumerate(rect))
 
     def _current_content_local_bounds(self):
         # Always reserve three slots on reveal, including when no children exist yet.
-        rects = [self._logical_pet_bounds(),(266,505,554,620)]
+        rects = [self._logical_pet_bounds(),transforms(self.appearance)[0].rect((266,505,554,620))]
+        if self.selector_rect and (self.selector_visible or self.preview_task):
+            rects.append(self.selector_rect)
+        if self.preview_dialog_rect:
+            rects.append(self.preview_dialog_rect)
         if self.permission_request and self.permission_bubble_rect:
             rects.append(self.permission_bubble_rect)
         elif self.update_notice:
-            rects.append(self.update_notice.bounds)
-        return tuple(round(v*self.scale) for v in union(rects))
+            rects.append(self.update_bounds or transforms(self.appearance)[1].rect(self.update_notice.rect))
+            if self.update_notice.release:
+                rects.append(transforms(self.appearance)[0].rect((360,338,460,442)))
+        return self._physical_bounds(union(rects))
 
     def _edge_bottom_drop(self,edge,pet_bounds):
         return 0.0 # The reserved family must remain inside the work area.
@@ -654,7 +858,7 @@ class WindowsPet(win.PigPet):
             return
         count = min(3,len(self.store.children(self.store.selected,time.time())))
         main = placement.tail_rect
-        scale = self.scale
+        scale = self.scale*self.appearance.petScale
         side, overlap = round(68*scale),round(30*scale)
         screen = placement.monitor.frame
         if placement.edge in ('left','right'):
@@ -677,11 +881,13 @@ class WindowsPet(win.PigPet):
 
     def _handle_left_button_down(self):
         point = self._cursor_window_position()
+        if point and (self._point_in_rect(point,self.preview_dialog_rect) or self._point_in_rect(point,self.preview_task_rect)):
+            return
         if self.permission_request and point and self._point_in_rect(point,self.permission_bubble_rect):
             super()._handle_left_button_down()
             return
-        if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_notice.bounds):
-            self.update_down = next((a for a,r in self.update_notice.buttons.items() if self._point_in_rect(point,r)), 'surface')
+        if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_bounds):
+            self.update_down = next((a for a,r in self.update_buttons.items() if self._point_in_rect(point,r)), 'surface')
             win.user32.SetCapture(self.hwnd)
             return
         if point:
@@ -731,7 +937,7 @@ class WindowsPet(win.PigPet):
             action,self.update_down = self.update_down,None
             win.user32.ReleaseCapture()
             point = self._cursor_window_position()
-            if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_notice.buttons.get(action)):
+            if self.update_notice and not self.permission_request and point and self._point_in_rect(point,self.update_buttons.get(action)):
                 self._update_action(action)
             return
         if self.selector_down:
@@ -742,7 +948,7 @@ class WindowsPet(win.PigPet):
                 self.store.select(actor)
                 self.focused_child = ''
                 node = self.store.nodes[actor]
-                if node.unread:
+                if node:
                     try:
                         # ShellExecute reports failure if the URL handler is absent.
                         result = win.ctypes.windll.shell32.ShellExecuteW(None,'open','codex://threads/'+actor,None,None,1)
@@ -767,7 +973,7 @@ class WindowsPet(win.PigPet):
         if not owner:
             return
         menu = win.user32.CreatePopupMenu()
-        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(170,'正在检查更新…' if self.update_checker.checking else '检查更新…'),(150,'关闭开机自启动' if win.is_autostart_enabled() else '开启开机自启动'),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
+        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(180,'外观…'),(170,'正在检查更新…' if self.update_checker.checking else '检查更新…'),(150,'关闭开机自启动' if win.is_autostart_enabled() else '开启开机自启动'),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
             flags = win.MF_STRING | (1 if command==101 and self.store.work_tokens() else 0)
             win.user32.AppendMenuW(menu,flags,command,label)
         cursor = win.POINT()
@@ -783,6 +989,8 @@ class WindowsPet(win.PigPet):
             self.leisure.enter(time.monotonic())
         elif command == 150:
             win.set_autostart(not win.is_autostart_enabled(),self.app_dir)
+        elif command == 180:
+            self._show_appearance()
         elif command == 160:
             win.user32.MessageBoxW(owner,'首次安装后，请在 Codex /hooks 中审核并信任 GooglePiggy 的 Hook。桌宠不会修改信任数据库。\n权限请求只响应当前请求的允许／拒绝。','GooglePiggy',0)
         elif command == 170:
@@ -806,6 +1014,9 @@ class WindowsPet(win.PigPet):
             presentation=(self.edge_transition or 'hidden') if self.edge_placement else 'visible',
             tail_visible=bool(self.tail_hwnd and win.user32.IsWindowVisible(self.tail_hwnd)))
         p['update_phase'] = self.update_notice.phase if self.update_notice else None
+        p['appearance'] = dict(self.appearance.values)
+        p['appearance_preview'] = {'dialog':self.preview_dialog,'task':self.preview_task}
+        p['appearance_window_open'] = bool(self.appearance_window and self.appearance_window.alive)
         p['update_visible'] = bool(self.update_notice and not self.permission_request)
         p['update_checking'] = self.update_checker.checking
         if os.environ.get('GOOGLEPIGGY_QA_WINDOW') == '1' and not self.observer.enabled:
@@ -848,6 +1059,10 @@ class WindowsPet(win.PigPet):
                     self.animation_timer.acknowledge()
             return 0
         if hwnd == self.hwnd and message == win.WM_DESTROY:
+            if self.appearance_dirty:
+                self.appearance.save()
+            if self.appearance_window:
+                self.appearance_window.close()
             self.observer.close()
             if self.animation_timer:
                 self.animation_timer.close()
@@ -876,7 +1091,7 @@ class WindowsPet(win.PigPet):
             dx = max(work[0]-content[0], min(0,work[2]-content[2]))
             dy = max(work[1]-content[1], min(0,work[3]-content[3]))
             if dx or dy:
-                self._set_window_origin(self.hwnd,(rect[0]+dx,rect[1]+dy))
+                self.pending_origin_delta = (self.pending_origin_delta[0]+dx,self.pending_origin_delta[1]+dy)
 
     def _update_action(self, action):
         notice = self.update_notice

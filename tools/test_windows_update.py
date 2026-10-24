@@ -203,15 +203,19 @@ class UpdateTests(unittest.TestCase):
             work=(-2560,-200,0,1320)
             for origin in ((-2800,-300),(-600,1000)):
                 local=tuple(round(v*scale) for v in (230,104,590,620))
-                content=tuple(local[i]+origin[i%2] for i in range(4))
                 moved=[]
                 pet=SimpleNamespace(hwnd=1,dragging=False,edge_transition=None,edge_placement=None,hidden_family='',
-                    _current_content_local_bounds=lambda:local,_screen_bounds_for_local=lambda r:content,
+                    pending_origin_delta=(0,0),_current_content_local_bounds=lambda:local,
                     _window_rect=lambda hwnd:(*origin,origin[0]+round(640*scale),origin[1]+round(640*scale)),
                     _set_window_origin=lambda hwnd,xy:moved.append(xy))
+                pet._screen_bounds_for_local=lambda r:w.WindowsPet._screen_bounds_for_local(pet,r)
                 with patch.object(w.win,'enumerate_monitor_infos',return_value=[SimpleNamespace(frame=work,work=work)]):
                     w.WindowsPet._fit_update_notice(pet)
-                xy=moved[-1] if moved else origin
+                    first=pet.pending_origin_delta
+                    w.WindowsPet._fit_update_notice(pet)
+                    self.assertEqual(first,pet.pending_origin_delta)
+                self.assertEqual(moved,[], 'Do not move the old bitmap before atomic submission')
+                xy=tuple(a+b for a,b in zip(origin,pet.pending_origin_delta))
                 bounds=tuple(local[i]+xy[i%2] for i in range(4))
                 self.assertTrue(bounds[0]>=work[0] and bounds[1]>=work[1] and bounds[2]<=work[2] and bounds[3]<=work[3])
 

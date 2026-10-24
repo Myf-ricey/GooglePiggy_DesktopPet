@@ -1,6 +1,7 @@
 """Pillow rendering for the same 640-point update notice as the Mac version."""
 import math
 import time
+from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFilter
 
 
@@ -29,12 +30,15 @@ class UpdateNotice:
             return {'dismiss':(258,284,562,318)}
         return {'dismiss':(258,284,400,318),'update':(420,284,562,318)}
 
-    def draw(self, canvas, current, font, surface, wrap, reduced=False, elapsed=None):
+    def draw(self, canvas, current, font, surface, wrap, reduced=False, elapsed=None, appearance=None, decoration=True):
         elapsed = time.monotonic()-self.started if elapsed is None else elapsed
         left,top,right,bottom = self.rect
         canvas.alpha_composite(surface(self.rect))
         draw = ImageDraw.Draw(canvas)
         ink,rose,green = '#4a3b40','#a36170','#459161'
+        if appearance:
+            ink = appearance.color('dialogTextColor', ink)
+            rose = appearance.color('dialogTextColor', rose)
         draw.text((left+20,top+16),'猪猪桌宠 · 软件更新',font=font(11),fill=rose)
         progress = self.phase in {'downloading','verifying','ready','installing'}
         if self.release:
@@ -60,29 +64,50 @@ class UpdateNotice:
             draw.text((left+20,top+47),title,font=font(15 if self.error else 17,True),fill=ink)
         for action,rect in self.buttons.items():
             primary = action=='update' or not self.release
-            draw.rounded_rectangle(rect,10,fill=green if primary else '#e3e3e3')
+            button_layer = Image.new('RGBA', canvas.size)
+            ImageDraw.Draw(button_layer).rounded_rectangle(rect,10,fill=green if primary else '#e3e3e3')
+            if appearance:
+                from appearance import opacity
+                button_layer = opacity(button_layer, appearance.buttonOpacity)
+            canvas.alpha_composite(button_layer)
+            draw = ImageDraw.Draw(canvas)
             label = '取消下载' if action=='cancel' else ('重试' if self.error else '更新') if action=='update' else '稍后再说' if self.release else '收到！'
-            draw.text(((rect[0]+rect[2])/2,(rect[1]+rect[3])/2),label,font=font(13,True),anchor='mm',fill='white' if primary else ink)
+            text_color = 'white' if primary else '#4a3b40'
+            if appearance:
+                text_color = appearance.color('buttonTextColor', text_color)
+            draw.text(((rect[0]+rect[2])/2,(rect[1]+rect[3])/2),label,font=font(13,True),anchor='mm',fill=text_color)
+        if decoration:
+            self.draw_decoration(canvas, reduced, elapsed)
+
+    def draw_decoration(self, canvas, reduced=False, elapsed=None):
+        elapsed = time.monotonic()-self.started if elapsed is None else elapsed
         if self.release:
             pulse = .5 if reduced else (math.sin(elapsed*math.pi*1.25)+1)/2
             lift = 0 if reduced else math.sin(elapsed*math.pi*1.25)*2
-            # Draw at 3x, rotate counterclockwise 30 degrees, then downsample.
-            bulb = Image.new('RGBA',(300,300))
-            glow = Image.new('RGBA',(300,300))
-            d = ImageDraw.Draw(glow)
-            d.ellipse((73,61,227,215),fill=(255,196,50,round(65+60*pulse)))
-            bulb.alpha_composite(glow.filter(ImageFilter.GaussianBlur(18+12*pulse)))
-            d = ImageDraw.Draw(bulb)
-            outline = '#a36e30'
-            d.ellipse((105,78,195,168),fill=(255,round(219+18*pulse),92),outline=outline,width=7)
-            d.polygon([(113,143),(126,180),(174,180),(187,143)],fill=(255,round(219+18*pulse),92))
-            d.line([(113,143),(126,180),(174,180),(187,143)],fill=outline,width=7)
-            d.line([(138,177),(135,141),(150,150),(165,141),(162,177)],fill=outline,width=5)
-            d.rounded_rectangle((126,180,174,210),9,fill='#dbcca8',outline=outline,width=6)
-            d.line((132,195,168,195),fill=outline,width=4)
-            d.arc((119,94,149,124),180,270,fill='#fff9e3',width=8)
-            for angle in (-150,-110,-70,-30,15,165):
-                a=math.radians(angle)
-                d.line([(150+math.cos(a)*75,135+math.sin(a)*75),(150+math.cos(a)*(87+9*pulse),135+math.sin(a)*(87+9*pulse))],fill=outline,width=5)
-            bulb=bulb.rotate(30,resample=Image.Resampling.BICUBIC).resize((100,100),Image.Resampling.LANCZOS)
+            bulb = bulb_sprite(round(pulse*32))
             canvas.alpha_composite(bulb,(360,round(340+lift)))
+
+
+@lru_cache(maxsize=33)
+def bulb_sprite(level):
+    pulse = level/32
+    # Draw at 3x, rotate counterclockwise 30 degrees, then downsample.
+    bulb = Image.new('RGBA',(300,300))
+    glow = Image.new('RGBA',(300,300))
+    d = ImageDraw.Draw(glow)
+    d.ellipse((73,61,227,215),fill=(255,196,50,round(65+60*pulse)))
+    bulb.alpha_composite(glow.filter(ImageFilter.GaussianBlur(18+12*pulse)))
+    d = ImageDraw.Draw(bulb)
+    outline = '#a36e30'
+    d.ellipse((105,78,195,168),fill=(255,round(219+18*pulse),92),outline=outline,width=7)
+    d.polygon([(113,143),(126,180),(174,180),(187,143)],fill=(255,round(219+18*pulse),92))
+    d.line([(113,143),(126,180),(174,180),(187,143)],fill=outline,width=7)
+    d.line([(138,177),(135,141),(150,150),(165,141),(162,177)],fill=outline,width=5)
+    d.rounded_rectangle((126,180,174,210),9,fill='#dbcca8',outline=outline,width=6)
+    d.line((132,195,168,195),fill=outline,width=4)
+    d.arc((119,94,149,124),180,270,fill='#fff9e3',width=8)
+    for angle in (-150,-110,-70,-30,15,165):
+        a=math.radians(angle)
+        d.line([(150+math.cos(a)*75,135+math.sin(a)*75),(150+math.cos(a)*(87+9*pulse),135+math.sin(a)*(87+9*pulse))],fill=outline,width=5)
+    bulb=bulb.rotate(30,resample=Image.Resampling.BICUBIC).resize((100,100),Image.Resampling.LANCZOS)
+    return bulb
