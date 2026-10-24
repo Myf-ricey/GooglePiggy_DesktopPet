@@ -7,12 +7,12 @@ final class FamilySelector: NSObject {
     private var signature: String?
     private var appearanceScale: CGFloat = 1
     private var textColor: NSColor = .labelColor
-    func configure(scale: CGFloat, color: NSColor, opacity: CGFloat) {
+    func configure(scale: CGFloat, color: NSColor, opacity: CGFloat, textColor customTextColor: NSColor? = nil) {
         if appearanceScale != scale { signature = nil; appearanceScale = scale }
         signature = nil
         let rgb = color.usingColorSpace(.sRGB)
         let light = rgb.map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 } ?? 1
-        textColor = light < 0.45 ? .white : .black
+        textColor = (customTextColor ?? (light < 0.45 ? NSColor.white : NSColor.black)).withAlphaComponent(1)
         panel.backgroundColor = color.withAlphaComponent(opacity)
         panel.alphaValue = 1
     }
@@ -45,11 +45,12 @@ final class FamilySelector: NSObject {
         for (i, node) in nodes.enumerated() {
             let button = NSButton(title: (node.unread ? "● " : (node.id == selected ? "✓ " : "   ")) + node.title, target: self, action: #selector(selectRow(_:)))
             button.contentTintColor = textColor
+            let title = NSMutableAttributedString(string:button.title,attributes:[.font:NSFont.systemFont(ofSize:13),.foregroundColor:textColor])
             if node.unread {
-                let title = NSMutableAttributedString(string:button.title,attributes:[.font:NSFont.systemFont(ofSize:13),.foregroundColor:textColor])
                 title.addAttribute(.foregroundColor,value:NSColor.systemBlue,range:NSRange(location:0,length:1))
-                button.attributedTitle = title
             }
+            button.attributedTitle = title
+            button.attributedAlternateTitle = title
             button.identifier = NSUserInterfaceItemIdentifier(node.id)
             button.toolTip = "\(node.title) · \(counts[node.id] ?? 0) 个小助手"
             button.isBordered = false; button.alignment = .left; button.font = .systemFont(ofSize: 13)

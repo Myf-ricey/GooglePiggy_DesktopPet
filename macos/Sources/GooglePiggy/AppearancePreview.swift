@@ -49,7 +49,7 @@ final class AppearancePreview {
         dialogPanel.alphaValue = 1
         dialogView.needsDisplay = true
         tasks.configure(scale: appearance.taskScale, color: appearance.taskColor,
-                        opacity: appearance.number("taskOpacity", fallback: 0.9))
+                        opacity: appearance.number("taskOpacity", fallback: 0.9), textColor: appearance.taskTextColor)
         tasks.update(samples, selected: samples[0].id, counts: [:])
     }
     func position(dialogFrame: NSRect?, taskAnchor: NSRect?, screen: NSRect?, visible: Bool, realDialogVisible: Bool) {

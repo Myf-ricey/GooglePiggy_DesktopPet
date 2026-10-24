@@ -399,11 +399,18 @@ final class PetAppearance {
     }
     var dialogTextColor: NSColor? { customColor("dialogTextColor") }
     var buttonTextColor: NSColor? { customColor("buttonTextColor") }
+    var taskTextColor: NSColor? { customColor("taskTextColor") }
+    var resolvedTaskTextColor: NSColor {
+        if let taskTextColor { return taskTextColor }
+        let rgb = taskColor.usingColorSpace(.sRGB)
+        let light = rgb.map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 } ?? 1
+        return light < 0.45 ? .white : .black
+    }
     var dialogGap: CGFloat { number("dialogGap", fallback: 0) }
     var taskGap: CGFloat { number("taskGap", fallback: 8) }
     var taskColor: NSColor { color("taskColor", fallback: .windowBackgroundColor) }
     func reset() {
-        for key in ["petScale", "dialogScale", "taskScale", "dialogOpacity", "buttonOpacity", "taskOpacity", "dialogColor", "taskColor", "dialogTextColor", "buttonTextColor", "dialogGap", "taskGap"] {
+        for key in ["petScale", "dialogScale", "taskScale", "dialogOpacity", "buttonOpacity", "taskOpacity", "dialogColor", "taskColor", "dialogTextColor", "buttonTextColor", "taskTextColor", "dialogGap", "taskGap"] {
             defaults.removeObject(forKey: "appearance." + key)
         }
     }
@@ -425,13 +432,13 @@ final class AppearancePanel: NSObject, NSWindowDelegate {
     private var values: [String: NSTextField] = [:]
     func show() {
         if let window { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 580),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 624),
                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         panel.title = "外观"; panel.isReleasedWhenClosed = false; panel.level = .floating
         window = panel
         panel.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14
-        stack.frame = NSRect(x: 24, y: 24, width: 392, height: 532)
+        stack.frame = NSRect(x: 24, y: 24, width: 392, height: 576)
         panel.contentView?.addSubview(stack)
         let hint = NSTextField(labelWithString: "实时保存；透明度仅影响背景，文字保持清晰。")
         hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor; stack.addArrangedSubview(hint)
@@ -457,8 +464,9 @@ final class AppearancePanel: NSObject, NSWindowDelegate {
         var colors = NSStackView(); colors.spacing = 12
         for (title, key, color) in [("对话框颜色", "dialogColor", appearance.dialogColor), ("任务栏颜色", "taskColor", appearance.taskColor),
             ("对话框文字", "dialogTextColor", appearance.dialogTextColor ?? NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)),
-            ("按钮文字", "buttonTextColor", appearance.buttonTextColor ?? .white)] {
-            if key == "dialogTextColor" {
+            ("按钮文字", "buttonTextColor", appearance.buttonTextColor ?? .white),
+            ("任务栏文字颜色", "taskTextColor", appearance.resolvedTaskTextColor)] {
+            if key == "dialogTextColor" || key == "taskTextColor" {
                 stack.addArrangedSubview(colors); colors = NSStackView(); colors.spacing = 12
             }
             colors.addArrangedSubview(NSTextField(labelWithString: title))
@@ -506,6 +514,7 @@ final class AppearancePanel: NSObject, NSWindowDelegate {
         colorWells["taskColor"]?.color = appearance.taskColor
         colorWells["dialogTextColor"]?.color = NSColor(calibratedRed: 0.29, green: 0.23, blue: 0.25, alpha: 1)
         colorWells["buttonTextColor"]?.color = .white
+        colorWells["taskTextColor"]?.color = appearance.resolvedTaskTextColor
         onChange?()
 
     }

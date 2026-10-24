@@ -255,7 +255,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             window.setFrameOrigin(NSPoint(x: window.frame.minX + anchor.x-next.x, y: window.frame.minY + anchor.y-next.y))
         }
         familySelector.configure(scale: appearance.taskScale, color: appearance.taskColor,
-                                 opacity: appearance.number("taskOpacity", fallback: 0.9))
+                                 opacity: appearance.number("taskOpacity", fallback: 0.9), textColor: appearance.taskTextColor)
         refreshFamilyState(force: true); renderCurrent(); keepUpdateVisible()
         appearancePreview.refresh()
         positionAppearancePreview()
