@@ -22,8 +22,8 @@ from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.6-windows'
-APP_BUILD = '20261024.3-task-text-color'
+APP_VERSION = '0.5.7-windows'
+APP_BUILD = '20261025.1-system-startup'
 
 
 @lru_cache(maxsize=16)
@@ -442,6 +442,8 @@ class WindowsPet(win.PigPet):
                     self.appearance_events.put(('preview',(key,bool(command[key]))))
         elif action == 'appearance-open':
             self._show_appearance()
+        elif action == 'autostart-inspect':
+            atomic_json(self.status_path.parent/'qa-autostart.json',win.autostart_request('inspect',self.app_dir))
         elif action == 'appearance-close' and self.appearance_window:
             self.appearance_window.close()
         elif action == 'update-preview':
@@ -973,7 +975,7 @@ class WindowsPet(win.PigPet):
         if not owner:
             return
         menu = win.user32.CreatePopupMenu()
-        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(180,'外观…'),(170,'正在检查更新…' if self.update_checker.checking else '检查更新…'),(150,'关闭开机自启动' if win.is_autostart_enabled() else '开启开机自启动'),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
+        for command,label in [(100,'状态互动（Codex）'),(101,'休息模式'),(180,'外观…'),(170,'正在检查更新…' if self.update_checker.checking else '检查更新…'),(150,win.autostart_menu_label()),(160,'Codex Hook 首次授权说明'),(199,'退出猪猪桌宠')]:
             flags = win.MF_STRING | (1 if command==101 and self.store.work_tokens() else 0)
             win.user32.AppendMenuW(menu,flags,command,label)
         cursor = win.POINT()
@@ -988,7 +990,7 @@ class WindowsPet(win.PigPet):
             self.transient_key=None
             self.leisure.enter(time.monotonic())
         elif command == 150:
-            win.set_autostart(not win.is_autostart_enabled(),self.app_dir)
+            win.toggle_autostart_from_menu(self.app_dir,owner)
         elif command == 180:
             self._show_appearance()
         elif command == 160:

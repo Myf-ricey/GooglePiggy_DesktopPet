@@ -71,40 +71,27 @@ if (Test-Path -LiteralPath $exePath) {
     throw 'No pig_pet.exe or launcher script was found.'
 }
 
-$preferenceKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\GooglePiggy\Preferences')
-try {
-    $savedAutostart = $preferenceKey.GetValue('AutostartEnabled', $null)
-    $approvedKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run')
-    $systemDisabled = $false
-    if ($approvedKey) {
-        try {
-            $approved = $approvedKey.GetValue($autostartName, $null)
-            $systemDisabled = $approved -is [byte[]] -and $approved.Length -gt 0 -and $approved[0] -in @(3,7)
-        } finally { $approvedKey.Dispose() }
-    }
-    $legacyDisabled = $false
-    if ($null -eq $savedAutostart -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'GifPigDesktopPet\pig-heartbeat.json'))) {
-        $oldRun = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($autostartKey)
-        try { $legacyDisabled = -not $oldRun -or $null -eq $oldRun.GetValue($autostartName, $null) }
-        finally { if ($oldRun) { $oldRun.Dispose() } }
-    }
-    $enableAutostart = -not $NoAutostart -and -not $systemDisabled -and -not $legacyDisabled -and ($null -eq $savedAutostart -or $savedAutostart -eq 1)
-    $preferenceKey.SetValue('AutostartEnabled', [int]$enableAutostart, [Microsoft.Win32.RegistryValueKind]::DWord)
-} finally { $preferenceKey.Dispose() }
-if ($enableAutostart) {
-    $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($autostartKey)
-    try {
-        $runKey.SetValue($autostartName, $autostartCommand, [Microsoft.Win32.RegistryValueKind]::String)
-    } finally {
-        $runKey.Dispose()
-    }
-} elseif ($NoAutostart) {
-    $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($autostartKey, $true)
-    if ($runKey) {
-        try { $runKey.DeleteValue($autostartName, $false) }
-        finally { $runKey.Dispose() }
-    }
+# Read the old local preference only for migration; Windows' system registry
+# provider is authoritative for the effective Run entry and startup switch.
+$preferencePath = 'Software\GooglePiggy\Preferences'
+$legacyPreference = $null
+$oldPreference = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($preferencePath)
+if ($oldPreference) {
+    try { $legacyPreference = $oldPreference.GetValue('AutostartEnabled', $null) }
+    finally { $oldPreference.Dispose() }
 }
+. (Join-Path $appDir 'tools\autostart_registry.ps1')
+$startupRequest = @{
+    action = $(if ($NoAutostart) { 'disable' } else { 'reconcile' })
+    command = $autostartCommand
+    target = $launchTarget
+    run_key = $autostartKey
+    preference_key = $preferencePath
+    legacy_preference = $legacyPreference
+    previous_install = (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'GifPigDesktopPet\pig-heartbeat.json'))
+}
+$startupStatus = Invoke-GooglePiggyAutostart $startupRequest
+Write-Host ('Windows startup verified: ' + $startupStatus.enabled)
 
 if (-not $NoDesktopShortcut) {
     $desktop = [Environment]::GetFolderPath('Desktop')

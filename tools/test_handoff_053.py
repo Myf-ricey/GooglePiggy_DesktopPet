@@ -47,31 +47,15 @@ class HandoffTests(unittest.TestCase):
                     p.update(extra); o.ingest(p)
                     self.assertIn(extra.get('agent_id','normal'),s.nodes)
 
-    def test_system_disabled_startup_is_not_reported_enabled(self):
-        class Key:
-            def __enter__(self): return self
-            def __exit__(self,*args): pass
-        def query(key,name):
-            return (b'\x03'+b'\0'*11,3) if getattr(key,'approved',False) else ('pet.exe',1)
-        def openkey(root,path):
-            k=Key(); k.approved='StartupApproved' in path; return k
-        with patch.object(win.winreg,'OpenKey',side_effect=openkey),patch.object(win.winreg,'QueryValueEx',side_effect=query):
-            self.assertFalse(win.is_autostart_enabled())
+    def test_startup_query_failure_is_not_reported_enabled(self):
+        with patch.object(win,'autostart_request',side_effect=OSError('provider unavailable')):
+            self.assertIn('未确认',win.autostart_menu_label())
+            with self.assertRaises(OSError):win.is_autostart_enabled()
 
-    def test_first_start_registers_once_and_preserves_opt_out(self):
-        with patch.object(win.winreg,'OpenKey',side_effect=FileNotFoundError),patch.object(win,'set_autostart') as register:
-            win.configure_first_autostart(Path('C:/Pet'))
-            register.assert_called_once_with(True,Path('C:/Pet'))
-        with patch.object(win.winreg,'OpenKey',side_effect=FileNotFoundError),patch.object(win,'set_autostart') as register:
+    def test_existing_install_still_reconciles_system_registration(self):
+        with patch.object(win,'autostart_request',return_value={'enabled':False}) as check,patch.object(win,'write_json_atomic'):
             win.configure_first_autostart(Path('C:/Pet'),previous_install=True)
-            register.assert_called_once_with(False,Path('C:/Pet'))
-        class Key:
-            def __enter__(self): return self
-            def __exit__(self,*args): pass
-        for preference in (0,1):
-            with patch.object(win.winreg,'OpenKey',return_value=Key()),patch.object(win.winreg,'QueryValueEx',return_value=(preference,4)),patch.object(win,'set_autostart') as register:
-                win.configure_first_autostart(Path('C:/Pet'))
-                register.assert_not_called()
+            check.assert_called_once_with('reconcile',Path('C:/Pet'),True)
 
     def test_compaction_is_not_task_completion(self):
         p=WindowsPet.__new__(WindowsPet); p.store=FamilyStore(); p.permission_request=None

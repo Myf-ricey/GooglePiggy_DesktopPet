@@ -1,0 +1,18 @@
+{
+  "unit_tests": 84,
+  "passed": true,
+  "system_broker_checks": 7,
+  "packaged_app_recreated_system_entry": true,
+  "exe_sha256": "c300f8b51ddd531ce63c1fd3f394aaffe61d88e44a4fd06632ed6267c9bb4cec",
+  "manifest_files": 3314,
+  "system_tests": [
+    "Fresh install creates a system-visible startup entry and reads it back",
+    "Saved enabled preference repairs a missing system Run entry",
+    "Stale/moved executable is reported disabled and repaired to current path",
+    "Explicit user opt-out survives a subsequent startup/installation",
+    "Windows Startup Apps disabling is preserved until explicit user enable",
+    "Missing executable is rejected without replacing the previous registration",
+    "Independent Win32_StartupCommand sees enable and removal; no admin elevation"
+  ],
+  "full_logon_tested": false
+}

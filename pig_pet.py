@@ -384,7 +384,9 @@ def permission_dir_for_status(status_path: Path) -> Path:
 
 def startup_command(app_dir: Path) -> str:
     if getattr(sys, "frozen", False):
-        return subprocess.list2cmdline([str(Path(sys.executable).resolve())])
+        # Use the same canonical command as install.ps1/uninstall.ps1 even
+        # when the path has no spaces, so ownership checks remain consistent.
+        return '"' + str(Path(sys.executable).resolve()) + '"'
     python = Path(sys.executable).resolve()
     pythonw = python.with_name("pythonw.exe")
     executable = pythonw if pythonw.is_file() else python
@@ -395,69 +397,57 @@ AUTOSTART_PREFERENCE_KEY = r'Software\GooglePiggy\Preferences'
 STARTUP_APPROVED_KEY = r'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
 
 
+def _legacy_autostart_preference():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, 'AutostartEnabled')
+            return value if value in (0, 1) else None
+    except OSError:
+        return None
+
+
+def autostart_request(action, app_dir, previous_install=False):
+    from windows_autostart import request
+    command = startup_command(app_dir)
+    target = Path(sys.executable).resolve()
+    if not getattr(sys, 'frozen', False):
+        pythonw = target.with_name('pythonw.exe')
+        if pythonw.is_file():
+            target = pythonw
+    return request(action, command, target, previous_install=previous_install,
+                   legacy_preference=_legacy_autostart_preference())
+
+
 def set_autostart(enabled: bool, app_dir: Path) -> None:
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY) as key:
-        if enabled:
-            winreg.SetValueEx(
-                key,
-                AUTOSTART_VALUE_NAME,
-                0,
-                winreg.REG_SZ,
-                startup_command(app_dir),
-            )
-        else:
-            try:
-                winreg.DeleteValue(key, AUTOSTART_VALUE_NAME)
-            except FileNotFoundError:
-                pass
-    # Only an explicit user choice clears Windows' disabled-startup marker.
-    if enabled:
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY) as key:
-            try:
-                winreg.DeleteValue(key, AUTOSTART_VALUE_NAME)
-            except FileNotFoundError:
-                pass
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
-        winreg.SetValueEx(key, 'AutostartEnabled', 0, winreg.REG_DWORD, int(enabled))
+    state = autostart_request('enable' if enabled else 'disable', app_dir)
+    if state['enabled'] != enabled or (not enabled and state['registered']):
+        raise OSError('Windows 自启动登记与所选状态不一致。')
 
 
 def is_autostart_enabled() -> bool:
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY) as key:
-            winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
-    except FileNotFoundError:
-        return False
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY) as key:
-            value, _ = winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
-            if isinstance(value, bytes) and value and value[0] in (3, 7):
-                return False
-    except FileNotFoundError:
-        pass
-    return True
+    return autostart_request('inspect', application_dir())['enabled']
 
 
 def configure_first_autostart(app_dir: Path, previous_install: bool = False) -> None:
+    # Reconcile saved intent with the actual system entry every normal launch.
+    # The provider respects explicit opt-out and Windows Startup Apps disabling.
+    state = autostart_request('reconcile', app_dir, previous_install)
+    write_json_atomic(default_status_path().parent / 'autostart-status.json',
+                      dict(state, checked_at=utc_timestamp()))
+
+
+def autostart_menu_label() -> str:
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
-            winreg.QueryValueEx(key, 'AutostartEnabled')
-            return
-    except FileNotFoundError:
-        pass
-    # An existing Run/approval entry belongs to an earlier install or to the
-    # system Startup Apps UI. Adopt it without overriding the user's choice.
-    for path in (AUTOSTART_REGISTRY_KEY, STARTUP_APPROVED_KEY):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
-                winreg.QueryValueEx(key, AUTOSTART_VALUE_NAME)
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_PREFERENCE_KEY) as key:
-                winreg.SetValueEx(key, 'AutostartEnabled', 0, winreg.REG_DWORD, int(is_autostart_enabled()))
-            return
-        except FileNotFoundError:
-            pass
-    # Legacy versions saved opt-out by removing Run, without a preference.
-    # An upgrade / existing production heartbeat identifies that migration.
-    set_autostart(not previous_install, app_dir)
+        return '关闭开机自启动' if is_autostart_enabled() else '开启开机自启动'
+    except OSError:
+        return '自启动状态未确认（点击重试）'
+
+
+def toggle_autostart_from_menu(app_dir, owner):
+    try:
+        set_autostart(not is_autostart_enabled(), app_dir)
+    except OSError as error:
+        user32.MessageBoxW(owner, str(error), '自启动设置未完成', 0x10)
 
 
 def acquire_single_instance() -> wintypes.HANDLE | None:
@@ -2807,7 +2797,7 @@ class PigPet:
             flags = MF_STRING | (MF_CHECKED if self.mode == mode else 0)
             user32.AppendMenuW(menu, flags, command, label)
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
-        autostart_label = "关闭开机自启动" if is_autostart_enabled() else "开启开机自启动"
+        autostart_label = autostart_menu_label()
         user32.AppendMenuW(menu, MF_STRING, 150, autostart_label)
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, 199, "退出猪猪桌宠")
@@ -2830,7 +2820,7 @@ class PigPet:
                 user32.DestroyWindow(self.hwnd)
             return
         elif command == 150:
-            set_autostart(not is_autostart_enabled(), self.app_dir)
+            toggle_autostart_from_menu(self.app_dir, owner)
         elif 100 <= command <= 106:
             self._select_mode(entries[command - 100][2])
         self._restore_after_menu_dismissal()
@@ -3185,7 +3175,11 @@ def main() -> None:
             if not mutex or kernel32.GetLastError() == 183:
                 return
             if getattr(sys, 'frozen', False) and not (args.status_file or args.qa_window or args.no_codex_observer):
-                configure_first_autostart(app_dir, previous_install=previous_install)
+                try:
+                    configure_first_autostart(app_dir, previous_install=previous_install)
+                except OSError as error:
+                    write_json_atomic(default_status_path().parent / 'autostart-status.json',
+                                      {'verified': False, 'error': str(error), 'checked_at': utc_timestamp()})
             WindowsPet(animations, qa_dir / 'manifest-report.json', app_dir, status_path, observe=not args.no_codex_observer).run()
             return
         cache_dir = app_dir / "cache"

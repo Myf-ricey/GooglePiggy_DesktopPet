@@ -4,14 +4,11 @@ $ErrorActionPreference = 'Stop'
 $appDir = $PSScriptRoot
 $autostartKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 
-$runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($autostartKey, $true)
-if ($runKey) {
-    try {
-        $runKey.DeleteValue('GifPigDesktopPet', $false)
-    } finally {
-        $runKey.Dispose()
-    }
-}
+. (Join-Path $appDir 'tools\autostart_registry.ps1')
+$exePath = Join-Path $appDir 'pig_pet.exe'
+$launcherPath = Join-Path $appDir 'start-pig-pet.cmd'
+$command = if (Test-Path -LiteralPath $exePath) { '"{0}"' -f $exePath } else { 'cmd.exe /c ""{0}""' -f $launcherPath }
+$null = Invoke-GooglePiggyAutostart @{action='remove'; command=$command; target=$exePath; run_key=$autostartKey}
 
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'GIF Pig Desktop Pet.lnk'
 Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue

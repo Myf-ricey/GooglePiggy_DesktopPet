@@ -303,6 +303,10 @@ class PortTests(unittest.TestCase):
             finally:
                 try: winreg.DeleteKey(winreg.HKEY_CURRENT_USER,test_key)
                 except FileNotFoundError: pass
+                from tools.test_autostart_native import powershell
+                assert test_key.startswith('Software\\GooglePiggy-Test-')
+                for sub in (test_key+'\\Run',test_key):
+                    powershell("Invoke-CimMethod -Namespace root/default -ClassName StdRegProv -MethodName DeleteKey -Arguments @{hDefKey=[uint32]2147483651;sSubKeyName=($sid+'\\"+sub+"')} | Out-Null")
             self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
             config=json.loads((home/'hooks.json').read_text(encoding='utf-8'))['hooks']
             self.assertEqual(len(config),12)

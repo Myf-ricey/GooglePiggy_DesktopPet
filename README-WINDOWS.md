@@ -1,10 +1,10 @@
-# GooglePiggy Windows 0.5.6
+# GooglePiggy Windows 0.5.7
 
 支持 Windows 10/11 x64，便携版无需 Python。本次实机验收环境是 Windows 11 24H2、单屏、150% DPI。
 
 ## 下载与安装
 
-从 [Windows 0.5.6 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.6-windows) 下载 `GooglePiggy-0.5.6-windows-x64.zip`。完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。不要只复制 EXE，也不要从压缩包内直接运行。
+从 [Windows 0.5.7 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.7-windows) 下载 `GooglePiggy-0.5.7-windows-x64.zip`。完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。不要只复制 EXE，也不要从压缩包内直接运行。
 
 首次双击 `pig_pet.exe` 会默认设置当前用户登录自启动；右键菜单可以关闭，以后启动、安装和更新保留该选择。开发／隔离测试不会设置自启动。在解压目录打开 PowerShell，运行安装器即可启用完整联动：
 
@@ -83,7 +83,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 
 ## 验收范围
 
-本轮测试与证据见 [0.5.6 验收](releases/windows-0.5.6/ACCEPTANCE.md)。本机为 Windows 11、150% DPI、单屏。100/125/200% DPI 与负坐标采用离线渲染／几何测试，其他物理显示器尚未实测。
+本轮测试与证据见 [0.5.7 验收](releases/windows-0.5.7/ACCEPTANCE.md)。本机为 Windows 11、150% DPI、单屏。100/125/200% DPI 与负坐标采用离线渲染／几何测试，其他物理显示器尚未实测。
 
 运行中拖到边缘隐藏时，家庭保持不变，直到主任务成功且子任务全部结束才弹出并完整庆祝；点击尾巴可提前唤出。更新提示不打断该隐藏状态。Windows 0.5.1 用户可直接一键升级到 0.5.6。
 
@@ -92,3 +92,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 右键猪猪选择“外观…”，可独立调整猪猪、对话框、任务栏大小，背景和按钮不透明度、背景颜色，以及对话框、按钮、任务栏各自的文字颜色和框与猪猪的距离。设置即时保存在状态目录的 `appearance.json`，升级保留。预览勾选在猪猪实际位置显示样例，不创建任务；关闭窗口收起预览。恢复默认保留预览勾选和窗口位置，恢复原渐变与各按钮默认文字色。任务列表中的任意状态任务均可点击打开对应 Codex 对话；打开失败保留未读提示。
 
 Windows 0.5.6 已通过用户验收。现有 Windows 0.5.1 及以上版本可通过“检查更新…”升级。
+
+## 0.5.7 自启动修复
+
+程序、安装器和卸载器共用 Windows 系统注册表服务登记并读回验证。开启偏好对应的启动项丢失或安装目录改变时会修复；用户主动关闭和 Windows 启动应用禁用继续保留。无法核实状态时显示“未确认”，操作失败给出提示，不再误报开启或导致桌宠退出。现有 0.5.6 用户可通过“检查更新…”升级。

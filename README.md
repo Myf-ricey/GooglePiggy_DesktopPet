@@ -4,7 +4,7 @@
 
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
-| Windows 10/11 x64 | **0.5.6** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.6-windows/GooglePiggy-0.5.6-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
+| Windows 10/11 x64 | **0.5.7** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.7-windows/GooglePiggy-0.5.7-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
 | macOS 13+ | **0.5.6** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.6-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
@@ -16,7 +16,7 @@
 - 空闲时会偷吃、睡觉；右键菜单可进入休息模式、设置自启动或退出。
 - Codex 发出权限请求时显示确认气泡，支持“允许一次”“拒绝”及长内容滚动。
 
-Windows 0.5.6 新增完整外观设置与原位预览，支持对话框、按钮和任务栏文字独立选色，任意状态任务可点击打开对话；修复调整大小或间距时的瞬时抖动，保留动画性能与输入响应优化。
+Windows 0.5.7 修复自启动登记验证、缺失修复和错误状态提示，保留 0.5.6 的完整外观设置与原位预览，支持对话框、按钮和任务栏文字独立选色，任意状态任务可点击打开对话；修复调整大小或间距时的瞬时抖动，保留动画性能与输入响应优化。
 
 ## Windows 快速开始
 
@@ -38,7 +38,7 @@ macOS 0.5.6 新增完整外观设置、真实位置预览、任意状态任务�
 
 ## 版本规划
 
-同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 与 macOS 当前均为 **0.5.6**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 当前为 **0.5.7**，macOS 当前为 **0.5.6**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
 
 ## 开发与验证
 
@@ -47,7 +47,7 @@ Windows 源码使用 Python 3.11+，本次在 Python 3.13、Windows 11 x64、150
 ```powershell
 py -3 -m pip install -r requirements-dev.txt
 py -3 pig_pet.py --qa-only
-py -3 -m unittest tools.test_appearance tools.test_appearance_stability tools.test_handoff_053 tools.test_windows_port tools.test_windows_update tools.test_internal_memory tools.test_compressed_rollout tools.test_state_audit -q
+py -3 -m unittest tools.test_autostart tools.test_appearance tools.test_appearance_stability tools.test_handoff_053 tools.test_windows_port tools.test_windows_update tools.test_internal_memory tools.test_compressed_rollout tools.test_state_audit -q
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
 py -3 -m PyInstaller --noconfirm pig_pet.spec
 py -3 tools/test_windows_runtime.py --exe
@@ -56,9 +56,9 @@ py -3 tools/test_state_runtime.py dist/GifPigDesktopPet/pig_pet.exe
 
 也可运行 `build-release.ps1` 完成 Windows 构建与检查。macOS 构建见 `build-macos.sh` 和 [Mac 发布检查](RELEASE-CHECKLIST-MAC.md)。
 
-Windows 本版标签为 `v0.5.6-windows`，构建 `20261024.3-task-text-color`。各平台更新器只识别本平台发行。
+Windows 本版标签为 `v0.5.7-windows`，构建 `20261025.1-system-startup`。各平台更新器只识别本平台发行。
 
-[Windows 0.5.6 发布说明](RELEASE-NOTES-v0.5.6-windows.md) · [验收报告](releases/windows-0.5.6/ACCEPTANCE.md)
+[Windows 0.5.7 发布说明](RELEASE-NOTES-v0.5.7-windows.md) · [验收报告](releases/windows-0.5.7/ACCEPTANCE.md)
 
 ## 许可
 
