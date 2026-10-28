@@ -22,8 +22,8 @@ from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.7-windows'
-APP_BUILD = '20261025.1-system-startup'
+APP_VERSION = '0.5.8-windows'
+APP_BUILD = '20261028.1-animation-contours'
 
 
 @lru_cache(maxsize=16)
