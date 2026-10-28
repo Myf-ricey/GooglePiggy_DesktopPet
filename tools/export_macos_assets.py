@@ -12,6 +12,10 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
+from clean_celebration_edges import clean_celebration_edges
+from repair_animation_alpha import repair_jump_tail_gaps, repair_question_alpha
+from uniform_pig_contours import uniform_pig_contour
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
@@ -363,6 +367,7 @@ def make_edge_tail_assets(frame: Image.Image, output_dir: Path) -> None:
         assets[edge] = canvas
     output_dir.mkdir(parents=True, exist_ok=True)
     for edge, image in assets.items():
+        image = uniform_pig_contour(image, "edge_tail").image
         image.save(output_dir / f"{edge}.png", optimize=True)
 
 
@@ -398,6 +403,12 @@ def export(output_dir: Path) -> None:
         for index, (frame, duration) in enumerate(
             zip(animation.frames, animation.durations, strict=True)
         ):
+            if key == "jump":
+                frame = clean_celebration_edges(frame)
+                frame = repair_jump_tail_gaps(frame)
+            elif key == "question":
+                frame = repair_question_alpha(frame)
+            frame = uniform_pig_contour(frame, key).image
             relative_path = Path("animations") / key / f"{index:03d}.png"
             frame.save(output_dir / relative_path, optimize=True)
             visible_bounds = frame.getchannel("A").getbbox()
