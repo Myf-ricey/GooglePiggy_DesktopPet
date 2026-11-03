@@ -22,8 +22,8 @@ from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.8-windows'
-APP_BUILD = '20261028.1-animation-contours'
+APP_VERSION = '0.5.9-windows'
+APP_BUILD = '20261103.3-edge-startup-release'
 
 
 @lru_cache(maxsize=16)
@@ -660,7 +660,9 @@ class WindowsPet(win.PigPet):
             elif pixels is None:
                 pixels = win.premultiplied_bgra(self.last_canvas)
             if not self.scaled_once:
-                self.pending_origin_delta = tuple(a+b for a,b in zip(self.pending_origin_delta,(640-width,640-height)))
+                # Start from the original 640px window, not the cropped bitmap.
+                # Include the crop offset once, at the actual monitor DPI.
+                self.pending_origin_delta = tuple(640-round((640+off)*self.scale) for off in self.canvas_offset)
                 self.scaled_once = True
             rect = self._window_rect(hwnd)
             if rect:
@@ -818,6 +820,10 @@ class WindowsPet(win.PigPet):
             if self.update_notice.release:
                 rects.append(transforms(self.appearance)[0].rect((360,338,460,442)))
         return self._physical_bounds(union(rects))
+
+    @staticmethod
+    def _exposed_edges(monitor, pet_frame, monitors):
+        return win.PigPet._exposed_edges(monitor, pet_frame, monitors) - {'bottom'}
 
     def _edge_bottom_drop(self,edge,pet_bounds):
         return 0.0 # The reserved family must remain inside the work area.

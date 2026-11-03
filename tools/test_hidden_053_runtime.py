@@ -1,4 +1,4 @@
-"""Native four-edge task-bound hiding acceptance; isolated status and process."""
+"""Native three-edge task-bound hiding acceptance; isolated status and process."""
 import json, time
 from pathlib import Path
 import tools.test_windows_runtime as rt
@@ -17,7 +17,7 @@ def main():
         return rt.wait_for(lambda h:h['presentation']=='hidden' and h['selected_family']==root)
     try:
         rt.wait_for(lambda h:h.get('version')==APP_VERSION and h.get('window_visible'))
-        for edge in ('left','right','top','bottom'):
+        for edge in ('left','right','top'):
             root='root-'+edge; other='other-'+edge
             rt.event(root,'UserPromptSubmit')
             rt.wait_for(lambda h:h['selected_family']==root)

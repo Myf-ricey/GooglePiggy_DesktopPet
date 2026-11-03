@@ -97,14 +97,18 @@ def main():
         command('reveal')
         wait_for(lambda h:h['presentation']=='visible' and not h['tail_visible'])
         passed.append('New turn stays hidden; tail action reveals whole family')
-        for edge in ('left','top','bottom'):
+        for edge in ('left','top'):
             command('edge',edge=edge)
             wait_for(lambda h:h['presentation']=='hidden' and h['hidden_edge']==edge)
             command('reveal')
             h=wait_for(lambda h:h['presentation']=='visible')
             rect,work=h['content_screen_rect'],h['monitor_work']
             assert rect[0]>=work[0] and rect[1]>=work[1] and rect[2]<=work[2] and rect[3]<=work[3],(rect,work)
-        passed.append('All four physical edges hide/reveal a family on the native window')
+        command('edge',edge='bottom')
+        time.sleep(1)
+        h=wait_for(lambda h:h['presentation']=='visible' and h['window_visible'] and not h['tail_visible'])
+        assert 'hidden_edge' not in h
+        passed.append('Left/right/top hide/reveal; bottom release stays visible without a tail')
         for i in range(1,12): event('actor-'+str(i),'SessionEnd',status='idle')
         event('actor-0','Interrupt','t2',status='interrupted')
         wait_for(lambda h:h['current_key']=='question')

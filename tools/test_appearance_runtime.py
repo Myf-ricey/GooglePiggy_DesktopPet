@@ -1,4 +1,4 @@
-"""Frozen HWND/settings lifetime, preview, scaling and four-edge acceptance."""
+"""Frozen HWND/settings lifetime, preview, scaling and three-edge acceptance."""
 import json
 import subprocess
 import sys
@@ -34,7 +34,7 @@ def main():
             rt.command('capture')
             rt.command('appearance',dialog=False,task=False)
             rt.wait_for(lambda h:h.get('appearance_preview')=={'dialog':False,'task':False})
-            for edge in ('left','right','top','bottom'):
+            for edge in ('left','right','top'):
                 rt.command('edge',edge=edge)
                 h=rt.wait_for(lambda h:h['presentation']=='hidden' and h['hidden_edge']==edge)
                 rect=h['tail_rect']
@@ -43,7 +43,10 @@ def main():
                 h=rt.wait_for(lambda h:h['presentation']=='visible')
                 c,w=h['content_screen_rect'],h['monitor_work']
                 assert c[0]>=w[0] and c[1]>=w[1] and c[2]<=w[2] and c[3]<=w[3],(scale,edge,c,w)
-            passed.append(f'{scale:.0%}: native preview isolation and four-edge scaled tail hide/reveal')
+            rt.command('edge',edge='bottom')
+            time.sleep(1)
+            rt.wait_for(lambda h:h['presentation']=='visible' and h['window_visible'] and not h['tail_visible'])
+            passed.append(f'{scale:.0%}: native preview isolation; left/right/top hide/reveal; bottom stays visible')
         rt.command('exit')
         assert process.wait(timeout=5)==0
         settings=json.loads((rt.STATE/'appearance.json').read_text())
