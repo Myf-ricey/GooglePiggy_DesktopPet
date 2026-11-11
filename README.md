@@ -5,7 +5,7 @@
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
 | Windows 10/11 x64 | **0.5.9** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.9-windows/GooglePiggy-0.5.9-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
-| macOS 13+ | **0.5.6** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.6-macos) · [macOS 说明](README-MAC.md) |
+| macOS 13+ | **0.5.7** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.7-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
 
@@ -34,11 +34,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## macOS
 
-macOS 0.5.6 新增完整外观设置、真实位置预览、任意状态任务跳转，以及随猪猪整体缩放的灯泡和尾巴；保留原有任务隐藏、过滤、签名更新与备份恢复。安装与使用见 [README-MAC.md](README-MAC.md)。
+macOS 0.5.7 缩短启动时恢复任务的等待，并减少运行中读取任务事件带来的卡顿。安装与使用见 [README-MAC.md](README-MAC.md)。
 
 ## 版本规划
 
-同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 当前为 **0.5.9**，macOS 当前为 **0.5.6**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 当前为 **0.5.9**，macOS 当前为 **0.5.7**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
 
 ## 开发与验证
 

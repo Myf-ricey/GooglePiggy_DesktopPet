@@ -218,7 +218,8 @@ final class PetController: NSObject, NSApplicationDelegate {
     private var successEffectStarted: TimeInterval?
 
     private let threadAnimations = ThreadAnimationClock()
-    private let families = FamilyStore()
+    private var families = FamilyStore()
+    private var loadingFamilyHistory = true
     private let familySelector = FamilySelector()
     private let appearance = PetAppearance.shared
     private let appearancePanel = AppearancePanel()
@@ -451,7 +452,7 @@ final class PetController: NSObject, NSApplicationDelegate {
             createWindow()
             updateInstaller.canRelaunch = { [weak self] in
                 guard let self else { return false }
-                return self.permissionRequest == nil && !self.dragging
+                return !self.loadingFamilyHistory && self.permissionRequest == nil && !self.dragging
                     && !self.families.nodes.values.contains { $0.active && $0.status == "permission" }
             }
             updateInstaller.onChange = { [weak self] event in
@@ -495,20 +496,35 @@ final class PetController: NSObject, NSApplicationDelegate {
             writeHeartbeat(force: true)
             renderCurrent()
             scheduleCurrent()
+            loadFamilyHistory()
             if let preview = CommandLine.arguments.firstIndex(of: "--preview-update"), CommandLine.arguments.count > preview+1 {
                 let state = CommandLine.arguments[preview+1]
                 let result: UpdateResult = state == "current" ? .current : state == "error" ? .failed : .available(PiggyRelease(version: "0.5.0", notes: "• 新增启动检查与手动检查更新\n• 发光小灯泡，及时告诉你新版消息\n• 优化猪猪的互动体验", url: URL(string: "https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases")!))
                 presentUpdate(result)
             } else { checkForUpdates(manual: false) }
-            if let edge = startupEdgePreview {
-                DispatchQueue.main.async { [weak self] in
-                    self?.refreshFamilyState(force: true)
-                    self?.previewEdgeHide(edge)
-                }
-            }
         } catch {
             presentStartupError(error)
             NSApp.terminate(nil)
+        }
+    }
+
+    private func loadFamilyHistory() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // The restored store belongs to this queue until replay finishes.
+            let restored = FamilyStore()
+            restored.poll()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isQuitting else { return }
+                let previousFamily = self.families.selectedID
+                self.families = restored
+                self.loadingFamilyHistory = false
+                self.familyPollAt = self.leisureNow
+                self.applyFamilyState(previousFamily: previousFamily)
+                self.refreshFamilyState()
+                self.renderCurrent()
+                self.writeHeartbeat(force: true)
+                if let edge = self.startupEdgePreview { self.previewEdgeHide(edge) }
+            }
         }
     }
 
@@ -1578,35 +1594,13 @@ final class PetController: NSObject, NSApplicationDelegate {
     }
 
     private func refreshFamilyState(force: Bool = false) {
+        guard !loadingFamilyHistory else { return }
         let now = ProcessInfo.processInfo.systemUptime
         if force || now-familyPollAt > 0.20 {
             familyPollAt = now
             let previousFamily = families.selectedID
             families.poll()
-            // Auto-selection of another running task must not steal the hidden
-            // task's completion or replace its celebration during the reveal.
-            if let family = hiddenTaskFamily, !family.isEmpty,
-               edgePlacement != nil || leisureNow < hiddenTaskCelebratingUntil {
-                if families.selectedID != family { families.select(family) }
-            } else if edgePlacement == nil {
-                hiddenTaskFamily = nil
-            }
-            observeNewTasks()
-            syncThreadAnimations()
-            if families.selectedID != previousFamily {
-                focusedChildID = ""; bridgeToken = ""; transientKey = nil
-                transientOnce = false; successEffectStarted = nil; frameIndex = 0
-            }
-            let node = families.nodes[focusedChildID].flatMap { $0.status == "permission" ? $0 : nil } ?? families.selected
-            selectedFamilyPayload = node?.payload ?? [:]
-            if let node, !node.active,
-                families.children(node.id).contains(where: { $0.active && !families.childIsPaused($0) }) {
-                selectedFamilyPayload = ["status":"working", "token":"family-children-working-"+node.id,
-                    "session_id":node.id,"received_at":Date().timeIntervalSince1970]
-            }
-            if !dragging, let payload = selectedFamilyPayload { _ = applyBridgePayload(payload) }
-            _ = revealForActivityIfNeeded()
-            if edgePlacement != nil && edgeTransition == nil { updateFamilyTailFrame() }
+            applyFamilyState(previousFamily: previousFamily)
         }
         let nodes = families.roots
         familySelector.update(nodes, selected: families.selectedID,
@@ -1632,6 +1626,33 @@ final class PetController: NSObject, NSApplicationDelegate {
         if headScreen.contains(mouse) || (familySelector.panel.isVisible && corridor.contains(mouse)) {
             familyHoverUntil = now+0.4; familySelector.panel.orderFrontRegardless()
         } else if now > familyHoverUntil { familySelector.panel.orderOut(nil) }
+    }
+
+    private func applyFamilyState(previousFamily: String) {
+        // Auto-selection of another running task must not steal the hidden
+        // task's completion or replace its celebration during the reveal.
+        if let family = hiddenTaskFamily, !family.isEmpty,
+           edgePlacement != nil || leisureNow < hiddenTaskCelebratingUntil {
+            if families.selectedID != family { families.select(family) }
+        } else if edgePlacement == nil {
+            hiddenTaskFamily = nil
+        }
+        observeNewTasks()
+        syncThreadAnimations()
+        if families.selectedID != previousFamily {
+            focusedChildID = ""; bridgeToken = ""; transientKey = nil
+            transientOnce = false; successEffectStarted = nil; frameIndex = 0
+        }
+        let node = families.nodes[focusedChildID].flatMap { $0.status == "permission" ? $0 : nil } ?? families.selected
+        selectedFamilyPayload = node?.payload ?? [:]
+        if let node, !node.active,
+            families.children(node.id).contains(where: { $0.active && !families.childIsPaused($0) }) {
+            selectedFamilyPayload = ["status":"working", "token":"family-children-working-"+node.id,
+                "session_id":node.id,"received_at":Date().timeIntervalSince1970]
+        }
+        if !dragging, let payload = selectedFamilyPayload { _ = applyBridgePayload(payload) }
+        _ = revealForActivityIfNeeded()
+        if edgePlacement != nil && edgeTransition == nil { updateFamilyTailFrame() }
     }
 
     private func drawFamilyChildren() {

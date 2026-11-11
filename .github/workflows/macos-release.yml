@@ -33,6 +33,11 @@ jobs:
       - name: Install animation build dependencies
         run: python -m pip install -r requirements-macos-build.txt
 
+      - name: Test task history replay
+        run: |
+          swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/family-store/main.swift -o /tmp/googlepiggy-family-store-test
+          GOOGLEPIGGY_STATE_DIR="$(mktemp -d)" /tmp/googlepiggy-family-store-test
+
       - name: Test suggested-reply task filtering
         run: |
           swiftc -framework AppKit macos/Sources/GooglePiggy/AppSupport.swift macos/Sources/GooglePiggy/FamilyStore.swift tests/suggested-replies/main.swift -o /tmp/googlepiggy-suggested-replies-test

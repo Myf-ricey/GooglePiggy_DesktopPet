@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 // Hook processes have separate address spaces. These values only scope their
 // own state/permission checks; the UI consumes immutable event files.
@@ -19,24 +20,34 @@ struct ThreadMetadata {
 }
 func lookupThreadMetadata(_ id: String) -> ThreadMetadata {
     guard !id.isEmpty else { return ThreadMetadata() }
-    let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
-        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+    let home = codexDataHome()
     let databases = ((try? FileManager.default.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) ?? [])
         .filter { $0.lastPathComponent.hasPrefix("state_") && $0.pathExtension == "sqlite" }
         .sorted { $0.lastPathComponent > $1.lastPathComponent }
     guard let database = databases.first else { return ThreadMetadata() }
-    let process = Process(), pipe = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-    let escaped = id.replacingOccurrences(of: "'", with: "''")
-    process.arguments = ["-readonly", "-json", database.path,
-        "SELECT COALESCE(NULLIF(name,''),title) AS title,source,rollout_path FROM threads WHERE id='\(escaped)' LIMIT 1;"]
-    process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return ThreadMetadata() }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
-    guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let row = rows.first else { return ThreadMetadata() }
-    var result = ThreadMetadata(registered: true, title: row["title"] as? String ?? "")
-    result.rollout = row["rollout_path"] as? String ?? ""
-    if let source = row["source"] as? String, let bytes = source.data(using: .utf8),
+    var connection: OpaquePointer?
+    let opened = sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil)
+    defer { sqlite3_close(connection) }
+    guard opened == SQLITE_OK else { return ThreadMetadata() }
+
+    var statement: OpaquePointer?
+    let query = "SELECT COALESCE(NULLIF(name,''),title), source, rollout_path FROM threads WHERE id = ? LIMIT 1"
+    guard sqlite3_prepare_v2(connection, query, -1, &statement, nil) == SQLITE_OK else {
+        return ThreadMetadata()
+    }
+    defer { sqlite3_finalize(statement) }
+    let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    guard sqlite3_bind_text(statement, 1, id, -1, transient) == SQLITE_OK,
+          sqlite3_step(statement) == SQLITE_ROW else { return ThreadMetadata() }
+
+    func column(_ index: Int32) -> String {
+        guard let text = sqlite3_column_text(statement, index) else { return "" }
+        let bytes = UnsafeBufferPointer(start: text, count: Int(sqlite3_column_bytes(statement, index)))
+        return String(decoding: bytes, as: UTF8.self)
+    }
+    var result = ThreadMetadata(registered: true, title: column(0))
+    result.rollout = column(2)
+    if let bytes = column(1).data(using: .utf8),
        let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
        let sub = json["subagent"] as? [String: Any], let spawn = sub["thread_spawn"] as? [String: Any] {
         result.parent = spawn["parent_thread_id"] as? String ?? ""
@@ -76,7 +87,19 @@ final class FamilyStore {
     }
     private var internalSessions = Set<String>()
     private var seen = Set<String>()
-    private var initialized = false
+    private struct DirectoryStamp: Equatable {
+        let modified: Date
+        let inode: UInt64
+
+        init?(_ directory: URL) {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: directory.path),
+                  let modified = attributes[.modificationDate] as? Date,
+                  let inode = attributes[.systemFileNumber] as? UInt64 else { return nil }
+            self.modified = modified
+            self.inode = inode
+        }
+    }
+    private var scannedDirectory: DirectoryStamp?
     private var rolloutModifications: [String:Date] = [:]
     private var metadataAttempts: [String:Date] = [:]
     private var observationAt = Date.distantPast
@@ -243,20 +266,28 @@ final class FamilyStore {
                 if !meta.title.isEmpty { node.title = meta.title }
             }
         }
-        let files = ((try? FileManager.default.contentsOfDirectory(at: familyEventDirectory(), includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "json" && !seen.contains($0.lastPathComponent) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        for file in files {
-            seen.insert(file.lastPathComponent)
-            guard let p = readJSONDictionary(file) else { continue }
-            let when = (p["received_at"] as? Double).map(Date.init(timeIntervalSince1970:)) ?? Date()
-            // Never replay old celebration on application restart.
-            ingest(p, now: when)
-        }
+        replayNewEvents()
         reconcileObservations()
         reconcileSelection()
-        if !initialized {
-            initialized = true
+    }
 
+    private func replayNewEvents() {
+        let directory = familyEventDirectory()
+        let stamp = DirectoryStamp(directory)
+        if let stamp, stamp == scannedDirectory { return }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else {
+            scannedDirectory = nil
+            return
+        }
+        // Sample before listing so an event published during the scan triggers another scan.
+        scannedDirectory = stamp
+        let files = names.filter { !seen.contains($0) && ($0 as NSString).pathExtension == "json" }.sorted()
+        for name in files {
+            seen.insert(name)
+            guard let event = readJSONDictionary(directory.appendingPathComponent(name)) else { continue }
+            let when = (event["received_at"] as? Double).map(Date.init(timeIntervalSince1970:)) ?? Date()
+            // Never replay old celebration on application restart.
+            ingest(event, now: when)
         }
     }
 }

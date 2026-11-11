@@ -61,3 +61,25 @@ assert(selection.selectedID == "second")
 selection.ingest(event("second","Stop","success"),now:Date().addingTimeInterval(-5));selection.reconcileSelection()
 assert(selection.selectedID.isEmpty)
 print("auto-select new task, preserve manual selection on tool calls, fallback and empty selection passed")
+
+let replayState = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+try FileManager.default.createDirectory(at: replayState, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: replayState) }
+setenv("GOOGLEPIGGY_STATE_DIR", replayState.path, 1)
+let replay = FamilyStore()
+replay.poll() // The hook may create the event directory after the first poll.
+let replayDirectory = familyEventDirectory()
+let newEvent = replayDirectory.appendingPathComponent("002.json")
+try writeJSONAtomic(event("replay-root", "UserPromptSubmit", "thinking"), to: newEvent)
+replay.poll()
+assert(replay.selectedID == "replay-root")
+let initialToken = replay.selected?.payload["token"] as? String
+replay.poll()
+assert(replay.selected?.payload["token"] as? String == initialToken)
+
+// A concurrent writer can publish a lower filename after a higher one was seen.
+let lateEvent = replayDirectory.appendingPathComponent("001.json")
+try writeJSONAtomic(event("replay-root", "SubagentStart", "working", agent: "replay-child"), to: lateEvent)
+replay.poll()
+assert(replay.children("replay-root").map(\.id) == ["replay-child"])
+print("event replay handles directory creation, unchanged polls and late-published files")

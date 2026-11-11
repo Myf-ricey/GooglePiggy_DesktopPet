@@ -277,7 +277,10 @@ def main() -> None:
             tail_images[edge] = rgba.crop(bounds)
     expected_right = tail_images["bottom"].transpose(Image.Transpose.ROTATE_90)
     assert expected_right.size == tail_images["right"].size
-    assert ImageChops.difference(expected_right, tail_images["right"]).getbbox() is None
+    # The right sprite shares the rotated silhouette, with edge-specific RGBA cleanup.
+    right_mask = tail_images["right"].getchannel("A").point(lambda alpha: 255 if alpha else 0)
+    expected_mask = expected_right.getchannel("A").point(lambda alpha: 255 if alpha else 0)
+    assert ImageChops.difference(expected_mask, right_mask).getbbox() is None
     common_left = tail_images["bottom"].transpose(Image.Transpose.ROTATE_270)
     assert common_left.size != tail_images["left"].size or (
         ImageChops.difference(common_left, tail_images["left"]).getbbox()
