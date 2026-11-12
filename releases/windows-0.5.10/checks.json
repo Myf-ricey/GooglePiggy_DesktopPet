@@ -1,0 +1,202 @@
+{
+  "version": "0.5.10-windows",
+  "build": "20261112.1-event-discovery-release",
+  "platform": "Windows 11 x64, single display, 150% DPI",
+  "unit_tests_passed": 97,
+  "frozen_observer": [
+    "Frozen observer resolves actor beyond 256 and compressed completion beside empty plaintext",
+    "17 MiB compressed fixture decodes with bundled dependency and no Python PATH",
+    "Fresh real-turn start remains active",
+    "Frozen observer filters safety check but retains same text in a project",
+    "Only a fresh tool start resumes after compaction; delayed result cannot",
+    "Restart replay preserves live root without resurrecting finished child",
+    "Explicit final completion clears active family"
+  ],
+  "frozen_runtime": [
+    "Native cold start, fresh heartbeat, isolated empty state",
+    "12 concurrent PS5.1 hooks preserve all actor files and UTF-8",
+    "Switching actors does not replay reading intro",
+    "Active family + 4 children hides; same-turn tool receipt stays hidden",
+    "New turn stays hidden; tail action reveals whole family",
+    "Left/right/top hide/reveal; bottom release stays visible without a tail",
+    "Native interrupt remains question after late tool result",
+    "Native compaction resists late tool receipt",
+    "Concurrent permission IPC returns matched allow/deny and removes request files",
+    "Two simultaneous requests from the same actor keep independent request IDs",
+    "Native rest sequence, independent sleeping tail and two-loop wake",
+    "Native GUI exits without orphan process"
+  ],
+  "frozen_three_edges": [
+    "left: tool, child, other family, compaction, interrupt, update stay hidden; full celebration then resume other work",
+    "right: tool, child, other family, compaction, interrupt, update stay hidden; full celebration then resume other work",
+    "top: tool, child, other family, compaction, interrupt, update stay hidden; full celebration then resume other work",
+    "Tail reveal handler releases running-family hide"
+  ],
+  "saved_scale": [
+    {
+      "size": 0.5,
+      "dpi": 1.5,
+      "window": [
+        2050,
+        1198,
+        2308,
+        1450
+      ],
+      "body": [
+        2122,
+        1288,
+        2236,
+        1387
+      ],
+      "work": [
+        0,
+        0,
+        2560,
+        1528
+      ],
+      "build": "20261112.1-event-discovery-release"
+    },
+    {
+      "size": 0.8,
+      "dpi": 1.5,
+      "window": [
+        1978,
+        1090,
+        2380,
+        1480
+      ],
+      "body": [
+        2088,
+        1230,
+        2270,
+        1387
+      ],
+      "work": [
+        0,
+        0,
+        2560,
+        1528
+      ],
+      "build": "20261112.1-event-discovery-release"
+    },
+    {
+      "size": 1,
+      "dpi": 1.5,
+      "window": [
+        1564,
+        532,
+        2524,
+        1492
+      ],
+      "body": [
+        2065,
+        1190,
+        2293,
+        1387
+      ],
+      "work": [
+        0,
+        0,
+        2560,
+        1528
+      ],
+      "build": "20261112.1-event-discovery-release"
+    },
+    {
+      "size": 2,
+      "dpi": 1.5,
+      "window": [
+        1690,
+        658,
+        2668,
+        1606
+      ],
+      "body": [
+        1951,
+        994,
+        2407,
+        1387
+      ],
+      "work": [
+        0,
+        0,
+        2560,
+        1528
+      ],
+      "build": "20261112.1-event-discovery-release"
+    }
+  ],
+  "upgrade_from_official": "0.5.8-windows",
+  "upgrade_checks": [
+    "Frozen isolated GUI starts without network checks",
+    "Native 150% DPI notice stays in monitor work area; captured PNG",
+    "Permission bubble takes priority and defers restart",
+    "Copied helper waits for exact EXE, backs up, replaces, restarts and preserves extra settings",
+    "Real restart failure restores previous EXE and relaunches it"
+  ],
+  "performance_before_version_stamp": {
+    "candidate_source": "b8db436f73cc09c4703a41de66e64c790eced5e3",
+    "fixture_event_count": 12321,
+    "repeats": 3,
+    "synthetic": true,
+    "enumerations": {
+      "baseline": [
+        21,
+        21,
+        21
+      ],
+      "candidate": [
+        1,
+        1,
+        1
+      ]
+    },
+    "real_windows_notification_overflow_replayed_events": 1800,
+    "native_window_summary_ms": {
+      "baseline": {
+        "first_bitmap_ms": {
+          "median": 1595.0780760031193,
+          "low": 1592.3826023936272,
+          "high": 2472.9418696369976
+        },
+        "first_bitmap_to_task_ms": {
+          "median": 8171.416900120676,
+          "low": 8061.253800056875,
+          "high": 8176.757199922577
+        },
+        "dispatch_p95_ms": {
+          "median": 217.30379993095994,
+          "low": 196.64489990100265,
+          "high": 217.974100029096
+        },
+        "desktop_pixel_gap_p95_ms": {
+          "median": 272.9940000000006,
+          "low": 263.4490000000014,
+          "high": 304.3440000000004
+        }
+      },
+      "candidate": {
+        "first_bitmap_ms": {
+          "median": 1598.2367782853544,
+          "low": 1596.3236133102328,
+          "high": 1609.603799879551
+        },
+        "first_bitmap_to_task_ms": {
+          "median": 8079.865799983963,
+          "low": 8055.314100114629,
+          "high": 8143.4484999626875
+        },
+        "dispatch_p95_ms": {
+          "median": 51.18909990414977,
+          "low": 36.030800081789494,
+          "high": 69.40769986249506
+        },
+        "desktop_pixel_gap_p95_ms": {
+          "median": 82.91600000000088,
+          "low": 79.41800000000043,
+          "high": 87.91000000000082
+        }
+      }
+    }
+  }
+}

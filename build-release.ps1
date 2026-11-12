@@ -52,9 +52,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Saved appearance cold-start validation failed.' }
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
-    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.9
+    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.10
     if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
-    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.9-windows-x64.zip'
+    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.10-windows-x64.zip'
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath
     Write-Host "Release: $releaseDir"

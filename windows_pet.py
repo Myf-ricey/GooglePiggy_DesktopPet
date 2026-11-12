@@ -22,8 +22,8 @@ from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.9-windows'
-APP_BUILD = '20261103.3-edge-startup-release'
+APP_VERSION = '0.5.10-windows'
+APP_BUILD = '20261112.1-event-discovery-release'
 
 
 @lru_cache(maxsize=16)
