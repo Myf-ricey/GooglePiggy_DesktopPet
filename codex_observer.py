@@ -11,8 +11,10 @@ import zstandard
 import queue
 import threading
 from family_store import FamilyStore
+from windows_directory_changes import WindowsDirectoryChanges
 
 UNCONFIRMED_START_GRACE = 45
+EVENT_DIRECTORY_RESCAN_SECONDS = 30
 INTERNAL_PROMPT_PREFIXES = (
     'This is an app-generated request for a suggested next user message.',
     '# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in ',
@@ -361,6 +363,12 @@ class ObserverReader:
     """
     def __init__(self, home, state_dir):
         self.reader = CodexObserver(FamilyStore(),state_dir,home)
+        self.event_dir = self.reader.state_dir/'family-events'
+        self.event_directory_id = None
+        self.event_changes = None
+        self.event_scan_due = 0
+        self.event_watch_retry = 0
+        self.event_names = set()
         self.requests, self.results = queue.Queue(maxsize=1),queue.Queue(maxsize=1)
         self.pending = False
         self.closed = threading.Event()
@@ -390,30 +398,70 @@ class ObserverReader:
             pass
 
     def _run(self):
-        while not self.closed.is_set():
-            nodes = self.requests.get()
-            if nodes is None or self.closed.is_set():
-                return
+        try:
+            while not self.closed.is_set():
+                nodes = self.requests.get()
+                if nodes is None or self.closed.is_set():
+                    return
+                try:
+                    result = self._read(nodes)
+                except Exception as error:
+                    result = {'error':type(error).__name__}
+                if self.closed.is_set():
+                    return
+                self.results.put_nowait(result)
+        finally:
+            self._close_event_watch()
+
+    def _close_event_watch(self):
+        if self.event_changes is not None:
+            self.event_changes.close()
+            self.event_changes = None
+
+    def _event_files(self, seen):
+        now = time.monotonic()
+        changes = None
+        if os.name == 'nt':
+            # A directory handle survives a rename. Verify that it still belongs
+            # to the directory currently at this path before trusting its hints.
             try:
-                result = self._read(nodes)
-            except Exception as error:
-                result = {'error':type(error).__name__}
-            if self.closed.is_set():
-                return
-            self.results.put_nowait(result)
+                info = self.event_dir.stat()
+                identity = (info.st_dev, info.st_ino) if info.st_ino else None
+            except OSError:
+                identity = None
+            if identity != self.event_directory_id:
+                self._close_event_watch()
+                self.event_directory_id = identity
+                self.event_watch_retry = now
+            try:
+                if identity is not None and self.event_changes is None and now >= self.event_watch_retry:
+                    self.event_changes = WindowsDirectoryChanges(self.event_dir)
+                    self.event_scan_due = now  # Arm notifications before the initial replay.
+                if self.event_changes is not None:
+                    changes = self.event_changes.read()
+            except OSError:
+                self._close_event_watch()
+                self.event_watch_retry = now + EVENT_DIRECTORY_RESCAN_SECONDS
+        self.event_names.difference_update(seen)
+        if changes is None or now >= self.event_scan_due:
+            self.event_names.update(file.name for file in self.event_dir.glob('*.json') if file.name not in seen)
+            self.event_scan_due = now + EVENT_DIRECTORY_RESCAN_SECONDS
+        else:
+            self.event_names.update(name for name in changes if name.lower().endswith('.json') and name not in seen)
+        return sorted(self.event_dir/name for name in self.event_names)
 
     def _read(self, request):
         nodes = request['nodes']
         reader, now = self.reader,time.time()
         pending = []
-        for file in sorted((reader.state_dir/'family-events').glob('*.json')):
-            if file.name in request['seen']:
-                continue
+        for file in self._event_files(request['seen']):
             try:
                 payload = json.loads(file.read_text(encoding='utf-8-sig'))
                 if isinstance(payload,dict): pending.append((file.name,payload))
+            except FileNotFoundError:
+                self.event_names.discard(file.name)
             except (OSError,ValueError,TypeError):
-                pass
+                pass  # Keep unreadable and unacknowledged files eligible for the next batch.
         actors = {p.get('agent_id') or p.get('session_id') for _,p in pending}
         actors.update(actor for actor,(_,active) in nodes.items() if active)
         reader.refresh_metadata(now,actors)

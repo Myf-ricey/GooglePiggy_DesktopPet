@@ -1,4 +1,6 @@
 """Pixel-exact and scheduling regressions supporting the native timing probe."""
+import json
+import os
 import sys
 import unittest
 import tempfile
@@ -13,6 +15,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import pig_pet as win
 from windows_pet import scaled_frame_bytes,resize_alpha,WindowsPet
 from animation_clock import load_manifest,Frames,DecodedFrames
+from codex_bridge import publish_event
 from codex_observer import CodexObserver,ObserverReader
 from family_store import FamilyStore
 from windows_animation_timer import WindowAnimationTimer
@@ -146,7 +149,6 @@ class AnimationPerformanceTests(unittest.TestCase):
         self.assertEqual(len(store.children('root',12)),2)
 
     def test_unacknowledged_events_are_retried(self):
-        from codex_bridge import publish_event
         with tempfile.TemporaryDirectory() as tmp:
             publish_event(Path(tmp),dict(session_id='a',event='UserPromptSubmit',turn_id='t'))
             reader=ObserverReader(tmp,tmp)
@@ -173,6 +175,110 @@ class AnimationPerformanceTests(unittest.TestCase):
             observer.poll(21)
             self.assertEqual(observer.store.nodes['a'].rollout,'new.jsonl')
             self.assertEqual(observer.metadata['a']['rollout'],'new.jsonl')
+
+
+@unittest.skipUnless(os.name == 'nt', 'Windows directory notifications')
+class EventDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.state = root / 'state'
+        self.directory = self.state / 'family-events'
+        self.directory.mkdir(parents=True)
+        self.reader = ObserverReader(root / 'codex-home', self.state)
+        self.addCleanup(self.close_reader)
+        self.seen = set()
+
+    def close_reader(self):
+        self.reader.close()
+        self.reader.thread.join(2)
+        self.assertFalse(self.reader.thread.is_alive())
+
+    def read(self):
+        result = self.reader._read(dict(nodes={}, versions={}, seen=frozenset(self.seen)))
+        self.seen.update(name for name, _ in result['pending'])
+        return [payload['session_id'] for _, payload in result['pending']]
+
+    def publish(self, actor):
+        publish_event(self.state, dict(session_id=actor, event='UserPromptSubmit', turn_id='turn'))
+
+    def test_idle_polls_do_not_list_history_again(self):
+        self.publish('existing')
+        glob = Path.glob
+        enumerations = []
+
+        def track(path, pattern, **kwargs):
+            if path == self.directory:
+                enumerations.append(pattern)
+            return glob(path, pattern, **kwargs)
+
+        with patch.object(Path, 'glob', track):
+            self.assertEqual(self.read(), ['existing'])
+            for _ in range(10):
+                self.assertEqual(self.read(), [])
+        self.assertEqual(enumerations, ['*.json'])
+
+    def write(self, filename, actor):
+        (self.directory / filename).write_text(json.dumps(dict(session_id=actor)), encoding='utf-8')
+
+    def test_atomic_rename_discovers_late_filename_without_listing(self):
+        self.write('200-existing.json', 'existing')
+        self.assertEqual(self.read(), ['existing'])
+        self.write('100-late.tmp', 'late')
+        glob = Path.glob
+
+        def reject_listing(path, pattern, **kwargs):
+            self.assertNotEqual(path, self.directory, 'Windows supplied the changed file name')
+            return glob(path, pattern, **kwargs)
+
+        with patch.object(Path, 'glob', reject_listing):
+            self.assertEqual(self.read(), [])
+            (self.directory / '100-late.tmp').replace(self.directory / '100-late.json')
+            deadline = time.monotonic() + 1
+            pending = self.read()
+            while not pending and time.monotonic() < deadline:
+                time.sleep(.005)
+                pending = self.read()
+            self.assertEqual(pending, ['late'])
+            self.assertEqual(self.read(), [])
+
+    def test_unreadable_file_is_retried_without_another_notification(self):
+        (self.directory / 'partial.json').write_text('{', encoding='utf-8')
+        self.assertEqual(self.read(), [])
+        with patch.object(self.reader.event_changes, 'read', return_value=set()):
+            self.write('partial.json', 'completed')
+            self.assertEqual(self.read(), ['completed'])
+
+    def test_directory_can_appear_or_be_replaced(self):
+        self.directory.rmdir()
+        self.assertEqual(self.read(), [])
+        self.directory.mkdir()
+        self.write('200-first.json', 'first')
+        self.assertEqual(self.read(), ['first'])
+        self.directory.rename(self.state / 'retired')
+        self.directory.mkdir()
+        self.write('100-replacement.json', 'replacement')
+        self.assertEqual(self.read(), ['replacement'])
+
+    def test_notification_overflow_recovers_every_pending_file_in_order(self):
+        self.assertEqual(self.read(), [])
+        self.write('200-second.json', 'second')
+        self.write('100-first.json', 'first')
+        with patch.object(self.reader.event_changes, 'read', return_value=None):
+            self.assertEqual(self.read(), ['first', 'second'])
+
+    def test_periodic_scan_recovers_a_missing_notification(self):
+        self.assertEqual(self.read(), [])
+        self.write('unreported.json', 'unreported')
+        with patch.object(self.reader.event_changes, 'read', return_value=set()):
+            self.assertEqual(self.read(), [])
+            with patch('codex_observer.time.monotonic', return_value=self.reader.event_scan_due):
+                self.assertEqual(self.read(), ['unreported'])
+
+    def test_notification_failure_falls_back_to_directory_listing(self):
+        with patch('codex_observer.WindowsDirectoryChanges', side_effect=OSError('no notifications')):
+            self.assertEqual(self.read(), [])
+            self.publish('fallback')
+            self.assertEqual(self.read(), ['fallback'])
 
 
 if __name__=='__main__':
