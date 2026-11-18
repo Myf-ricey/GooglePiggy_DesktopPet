@@ -71,15 +71,31 @@ final class FamilyNode {
     var lastEventAt = Date.distantPast
     var rollout = ""
     var unread = false
-    var resultAvailable = false
+    var resultCompletedAt: Date?
     init(id: String, parent: String, title: String) { self.id = id; self.parent = parent; self.title = title }
 }
 
 final class FamilyStore {
+    private struct DismissedResult {
+        let turn: String
+        let completedAt: Double
+    }
+
     var nodes: [String: FamilyNode] = [:]
     private var pendingAutoSelection: String?
     var selectedID = ""
-    init() { selectedID = readJSONDictionary(defaultStateDirectory().appendingPathComponent("selected-family.json"))?["id"] as? String ?? "" }
+    private let dismissedResultsURL: URL
+    private var dismissedResults: [String: DismissedResult]
+    init() {
+        let stateDirectory = defaultStateDirectory()
+        selectedID = readJSONDictionary(stateDirectory.appendingPathComponent("selected-family.json"))?["id"] as? String ?? ""
+        dismissedResultsURL = stateDirectory.appendingPathComponent("dismissed-results.json")
+        dismissedResults = readJSONDictionary(dismissedResultsURL)?.compactMapValues { value in
+            guard let receipt = value as? [String: Any], let turn = receipt["turn"] as? String,
+                  let completedAt = receipt["completed_at"] as? Double else { return nil }
+            return DismissedResult(turn: turn, completedAt: completedAt)
+        } ?? [:]
+    }
     func select(_ id: String) {
         pendingAutoSelection = nil
         selectedID = id
@@ -103,7 +119,6 @@ final class FamilyStore {
     private var rolloutModifications: [String:Date] = [:]
     private var metadataAttempts: [String:Date] = [:]
     private var observationAt = Date.distantPast
-    private var dismissedResults = Set<String>()
     private var titleRefresh = Date.distantPast
     var roots: [FamilyNode] {
         nodes.values.filter { $0.parent.isEmpty && ($0.active || $0.unread || !children($0.id).isEmpty) }
@@ -191,9 +206,10 @@ final class FamilyStore {
             node.active = false; node.completion = now
         }
         if ["Stop", "TaskCompleteFallback"].contains(event), node.parent.isEmpty {
-            node.resultAvailable = true; node.unread = true; dismissedResults.remove(node.id)
+            node.resultCompletedAt = now
+            node.unread = !isResultDismissed(node, completedAt: now)
         }
-        if begins { node.active = true; node.completion = nil; node.unread = false; node.resultAvailable = false; dismissedResults.remove(node.id) }
+        if begins { node.active = true; node.completion = nil; node.unread = false; node.resultCompletedAt = nil }
         if begins && ["UserPromptSubmit", "ResumeDetected", "PreCompact"].contains(event) && node.parent.isEmpty {
             pendingAutoSelection = actor
         }
@@ -220,8 +236,20 @@ final class FamilyStore {
         pendingAutoSelection = nil
         if target != selectedID { select(target) }
     }
-    func markResultOpened(_ id: String) {
-        dismissedResults.insert(id); nodes[id]?.unread = false
+    func dismissResult(_ id: String, completedAt: Date) {
+        guard let node = nodes[id], node.parent.isEmpty, node.unread,
+              node.resultCompletedAt == completedAt else { return }
+        node.unread = false
+        dismissedResults[id] = DismissedResult(turn: node.turn, completedAt: completedAt.timeIntervalSince1970)
+        try? writeJSONAtomic(dismissedResults.mapValues { ["turn": $0.turn, "completed_at": $0.completedAt] },
+                             to: dismissedResultsURL)
+    }
+
+    private func isResultDismissed(_ node: FamilyNode, completedAt: Date) -> Bool {
+        guard let result = dismissedResults[node.id] else { return false }
+        // A hook Stop and its observed fallback can represent the same turn at different times.
+        return (!node.turn.isEmpty && node.turn == result.turn)
+            || result.completedAt >= completedAt.timeIntervalSince1970
     }
     func childIsPaused(_ node: FamilyNode) -> Bool {
         node.status == "interrupted" || nodes[node.parent]?.status == "interrupted"
@@ -252,8 +280,9 @@ final class FamilyStore {
                     "turn_id":observed.turn,"token":"observed-"+observed.kind+observed.turn,"received_at":observed.date.timeIntervalSince1970],now:observed.date)
         }
         if let value = readJSONDictionary(codexDataHome().appendingPathComponent(".codex-global-state.json")), let unread = codexUnreadIDs(from:value) {
-            for node in nodes.values where node.parent.isEmpty && node.resultAvailable {
-                if unread.contains(node.id) { node.unread = !dismissedResults.contains(node.id) }
+            for node in nodes.values where node.parent.isEmpty {
+                guard let completedAt = node.resultCompletedAt else { continue }
+                if unread.contains(node.id) { node.unread = !isResultDismissed(node, completedAt: completedAt) }
                 else if now.timeIntervalSince(node.completion ?? .distantPast) > 3 { node.unread = false }
             }
         }

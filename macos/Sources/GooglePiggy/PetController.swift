@@ -482,6 +482,11 @@ final class PetController: NSObject, NSApplicationDelegate {
                 self.refreshFamilyState(force: true)
                 self.familySelector.panel.orderOut(nil)
             }
+            familySelector.onDismiss = { [weak self] id, completedAt in
+                guard let self else { return }
+                self.families.dismissResult(id, completedAt: completedAt)
+                self.refreshFamilyState()
+            }
             let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
                 if let self, !self.mouseDown {
                     if self.currentKey == "left", self.leisure.phase != .waking { self.updateNudgeDirection(NSEvent.mouseLocation) }

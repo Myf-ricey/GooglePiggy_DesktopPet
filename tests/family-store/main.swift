@@ -37,7 +37,6 @@ f.ingest(event("test-a","PostToolUse","working","manual-compact"))
 assert(f.nodes["test-a"]!.turn == "resumed-turn")
 f.ingest(event("test-a","Stop","success","resumed-turn"))
 assert(f.nodes["test-a"]!.unread && f.roots.contains { $0.id == "test-a" })
-f.markResultOpened("test-a");assert(!f.nodes["test-a"]!.unread)
 let readFixture: [String:Any] = ["electron-thread-read-state-v1":["version":1,"unreadByIdentity":["account":["local:host":["test-a"]]]]]
 assert(codexUnreadIDs(from:readFixture) == ["test-a"])
 assert(codexUnreadIDs(from:[:]) == nil)
@@ -83,3 +82,47 @@ try writeJSONAtomic(event("replay-root", "SubagentStart", "working", agent: "rep
 replay.poll()
 assert(replay.children("replay-root").map(\.id) == ["replay-child"])
 print("event replay handles directory creation, unchanged polls and late-published files")
+
+let codexHome = replayState.appendingPathComponent("codex")
+setenv("CODEX_HOME", codexHome.path, 1)
+let unreadURL = codexHome.appendingPathComponent(".codex-global-state.json")
+let unreadState = ["electron-thread-read-state-v1": ["version": 1, "unreadByIdentity": [
+    "account": ["local:host": ["dismiss-a", "dismiss-b"]]
+]]]
+try writeJSONAtomic(unreadState, to: unreadURL)
+let originalUnreadData = try Data(contentsOf: unreadURL)
+let completed = Date().addingTimeInterval(-10)
+func publishCompletion(_ id: String, turn: String, index: Int, completedAt: Date) throws {
+    var started = event(id, "UserPromptSubmit", "thinking", turn)
+    started["received_at"] = completedAt.addingTimeInterval(-1).timeIntervalSince1970
+    try writeJSONAtomic(started, to: replayDirectory.appendingPathComponent("01\(index).json"))
+    var stopped = event(id, "Stop", "success", turn)
+    stopped["received_at"] = completedAt.timeIntervalSince1970
+    try writeJSONAtomic(stopped, to: replayDirectory.appendingPathComponent("01\(index + 1).json"))
+}
+try publishCompletion("dismiss-a", turn: "first", index: 0, completedAt: completed)
+try publishCompletion("dismiss-b", turn: "first", index: 2, completedAt: completed)
+let notifications = FamilyStore()
+notifications.poll()
+assert(notifications.nodes["dismiss-a"]?.unread == true)
+assert(notifications.nodes["dismiss-b"]?.unread == true)
+let displayedCompletion = notifications.nodes["dismiss-a"]!.resultCompletedAt!
+notifications.dismissResult("dismiss-a", completedAt: displayedCompletion)
+notifications.dismissResult("dismiss-a", completedAt: displayedCompletion)
+assert(!notifications.roots.contains { $0.id == "dismiss-a" })
+assert(notifications.nodes["dismiss-b"]?.unread == true)
+// A fallback and a later Stop can represent the same completion on replay.
+try publishCompletion("dismiss-a", turn: "first", index: 0, completedAt: completed.addingTimeInterval(2))
+let restored = FamilyStore()
+restored.poll()
+assert(restored.nodes["dismiss-a"]?.unread == false)
+assert(!restored.roots.contains { $0.id == "dismiss-a" })
+assert(restored.nodes["dismiss-b"]?.unread == true)
+try publishCompletion("dismiss-a", turn: "second", index: 4, completedAt: Date())
+restored.poll()
+assert(restored.nodes["dismiss-a"]?.unread == true)
+restored.dismissResult("dismiss-a", completedAt: displayedCompletion)
+assert(restored.nodes["dismiss-a"]?.unread == true)
+let currentUnreadData = try Data(contentsOf: unreadURL)
+assert(currentUnreadData == originalUnreadData)
+print("notification dismissal targets a single result, survives replay and allows later completions")
