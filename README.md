@@ -4,8 +4,8 @@
 
 | 平台 | 最新版本 | 下载与说明 |
 | --- | --- | --- |
-| Windows 10/11 x64 | **0.5.10** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.10-windows/GooglePiggy-0.5.10-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
-| macOS 13+ | **0.5.7** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.7-macos) · [macOS 说明](README-MAC.md) |
+| Windows 10/11 x64 | **0.5.11** | [下载 Windows 便携包](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.11-windows/GooglePiggy-0.5.11-windows-x64.zip) · [安装与使用](README-WINDOWS.md) |
+| macOS 13+ | **0.5.8** | [macOS Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.8-macos) · [macOS 说明](README-MAC.md) |
 
 ## 小猪会做什么
 
@@ -16,7 +16,7 @@
 - 空闲时会偷吃、睡觉；右键菜单可进入休息模式、设置自启动或退出。
 - Codex 发出权限请求时显示确认气泡，支持“允许一次”“拒绝”及长内容滚动。
 
-Windows 0.5.10 减少运行中反复查看旧任务记录带来的卡顿，让历史记录较多时的动画和窗口响应更流畅。
+Windows 0.5.11 对齐任务标题和蓝点，支持右键将单条结果标为已读，并修复已结束任务残留在列表的问题。
 
 ## Windows 快速开始
 
@@ -34,11 +34,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## macOS
 
-macOS 0.5.7 缩短启动时恢复任务的等待，并减少运行中读取任务事件带来的卡顿。安装与使用见 [README-MAC.md](README-MAC.md)。
+macOS 0.5.8 对齐任务标题和蓝点，支持右键将单条结果标为已读。安装与使用见 [README-MAC.md](README-MAC.md)。
 
 ## 版本规划
 
-同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 当前为 **0.5.10**，macOS 当前为 **0.5.7**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
+同一轮功能更新使用同一目标版本号，允许 Windows / macOS 错峰发布。Windows 当前为 **0.5.11**，macOS 当前为 **0.5.8**，分别使用独立安装包和更新通道。详见 [版本号规则](VERSIONING.md) 和 [Windows 外观交接](releases/appearance-0.5.6/WINDOWS-HANDOFF.md)。
 
 ## 开发与验证
 
@@ -47,7 +47,7 @@ Windows 源码使用 Python 3.11+，本次在 Python 3.13、Windows 11 x64、150
 ```powershell
 py -3 -m pip install -r requirements-dev.txt
 py -3 pig_pet.py --qa-only
-py -3 -m unittest tools.test_animation_assets tools.test_autostart tools.test_appearance tools.test_appearance_stability tools.test_appearance_startup tools.test_windows_edge_policy tools.test_handoff_053 tools.test_windows_port tools.test_windows_update tools.test_internal_memory tools.test_compressed_rollout tools.test_state_audit -q
+py -3 -m unittest tools.test_animation_assets tools.test_autostart tools.test_appearance tools.test_appearance_stability tools.test_appearance_startup tools.test_windows_edge_policy tools.test_handoff_053 tools.test_notifications tools.test_completed_family_visibility tools.test_windows_port tools.test_windows_update tools.test_internal_memory tools.test_compressed_rollout tools.test_state_audit -q
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File hooks/codex-pig-hook.ps1 -SelfTest
 py -3 -m PyInstaller --noconfirm pig_pet.spec
 py -3 tools/test_windows_runtime.py --exe
@@ -57,9 +57,9 @@ py -3 tools/test_appearance_startup_runtime.py --exe dist/GifPigDesktopPet/pig_p
 
 也可运行 `build-release.ps1` 完成 Windows 构建与检查。macOS 构建见 `build-macos.sh` 和 [Mac 发布检查](RELEASE-CHECKLIST-MAC.md)。
 
-Windows 本版标签为 `v0.5.10-windows`，构建 `20261112.1-event-discovery-release`。各平台更新器只识别本平台发行。
+Windows 本版标签为 `v0.5.11-windows`，构建 `20261118.2-completed-family-candidate`。各平台更新器只识别本平台发行。
 
-[Windows 0.5.10 发布说明](RELEASE-NOTES-v0.5.10-windows.md) · [验收报告](releases/windows-0.5.10/ACCEPTANCE.md)
+[Windows 0.5.11 发布说明](RELEASE-NOTES-v0.5.11-windows.md) · [验收报告](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.11-windows/ACCEPTANCE.md)
 
 ## 许可
 

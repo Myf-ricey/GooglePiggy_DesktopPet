@@ -61,3 +61,7 @@ Windows 平台补丁版本 `v0.5.9-windows`，构建 `20261103.3-edge-startup-re
 ## Windows 0.5.10 任务记录读取优化
 
 Windows 平台补丁版本 `v0.5.10-windows`，构建 `20261112.1-event-discovery-release`。后台通过 Windows 文件变更通知发现新任务记录，保留启动恢复、读失败重试和定期补查。对应 macOS 正式版本为 0.5.7。
+
+## Windows 0.5.11 任务通知
+
+正式标签 `v0.5.11-windows`，构建 `20261118.2-completed-family-candidate`。同步 macOS 0.5.8 的任务标题对齐和单条右键已读。修复父任务结束且已读后，条目被中断子任务保留的问题。

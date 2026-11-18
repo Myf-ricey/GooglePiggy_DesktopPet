@@ -180,7 +180,8 @@ class CodexObserver:
             if unread is not None:
                 for node in self.store.nodes.values():
                     if node.result and not node.parent and now-(node.completion or now) > 3:
-                        node.unread = node.id in unread and node.id not in self.opened
+                        node.unread = (node.id in unread and node.id not in self.opened
+                            and not self.store.is_result_dismissed(node))
             for node in self.store.nodes.values():
                 if (node.active and node.status == 'thinking' and
                     node.payload.get('event') == 'UserPromptSubmit' and node.id not in self.metadata and
@@ -342,7 +343,8 @@ class CodexObserver:
                 if unread is not None:
                     for node in self.store.nodes.values():
                         if node.result and not node.parent and now-(node.completion or now) > 3:
-                            node.unread = node.id in unread and node.id not in self.opened
+                            node.unread = (node.id in unread and node.id not in self.opened
+                                and not self.store.is_result_dismissed(node))
             except (OSError,ValueError):
                 self.unread_supported = False
             for node in self.store.nodes.values():

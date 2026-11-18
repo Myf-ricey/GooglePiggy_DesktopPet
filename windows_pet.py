@@ -22,8 +22,8 @@ from windows_animation_timer import WindowAnimationTimer, ANIMATION_MESSAGE
 from appearance import Appearance, Transform, transforms, opacity
 
 SLOTS = [(310,575),(410,615),(510,575)]
-APP_VERSION = '0.5.10-windows'
-APP_BUILD = '20261112.1-event-discovery-release'
+APP_VERSION = '0.5.11-windows'
+APP_BUILD = '20261118.2-completed-family-candidate'
 
 
 @lru_cache(maxsize=16)
@@ -132,7 +132,7 @@ class WindowsPet(win.PigPet):
         self.dialog_cache_key, self.dialog_cache = None, None
         self.render_layers = []
         self.physical_ui_cache = {}
-        self.store = FamilyStore()
+        self.store = FamilyStore(status_path.parent/'dismissed-results.json')
         self.observer = CodexObserver(self.store,status_path.parent,enabled=observe)
         if observe:
             self.observer.enable_background()
@@ -155,6 +155,10 @@ class WindowsPet(win.PigPet):
         self.selector_visible, self.selector_last_hover = False, 0
         self.selector_rect, self.selector_rows = None, []
         self.selector_scroll, self.selector_down = 0, None
+        self.selector_dismiss_rows = []
+        self.selector_cache_key, self.selector_cache = None, None
+        self.selector_right_down = None
+        self.selector_right_gesture = False
         self.focused_child = ''
         self.permission_page, self.permission_viewed = 0, set()
         self.permission_actors = set()
@@ -389,6 +393,7 @@ class WindowsPet(win.PigPet):
             self.appearance.save()
             self.appearance_dirty = 0
         if changed:
+            self._cancel_selector_dismiss()
             self.compose()
             if self.edge_placement and not self.edge_transition:
                 self._show_tail(self.edge_placement)
@@ -535,13 +540,18 @@ class WindowsPet(win.PigPet):
         if self.selector_visible or self.preview_task:
             layer = Image.new('RGBA',(640,640))
             self._composite_selector(layer, preview=self.preview_task)
+            layer = self.selector_cache[0]
             self.selector_rect = task_transform.rect(self.selector_rect)
             self.selector_rows = [(task_transform.rect(rect), actor) for rect,actor in self.selector_rows]
+            self.selector_dismiss_rows = [(task_transform.rect(rect), actor, token)
+                for rect,actor,token in self.selector_dismiss_rows]
             if self.preview_task:
                 self.preview_task_rect = self.selector_rect
             layers.append((layer, task_transform))
         else:
             self.selector_rect, self.selector_rows = None, []
+            self.selector_dismiss_rows = []
+            self._cancel_selector_dismiss()
         self.update_bounds, self.update_buttons = None, {}
         if self.permission_request or self.preview_dialog:
             layer = Image.new('RGBA',(640,640))
@@ -630,6 +640,7 @@ class WindowsPet(win.PigPet):
             except AttributeError:
                 self.scale = 1
             if self.scaled_once and self.scale != old_scale:
+                self._cancel_selector_dismiss()
                 delta = tuple(round((v+off)*old_scale)-round((v+off)*self.scale) for v,off in zip((410,570),self.canvas_offset))
                 self.pending_origin_delta = tuple(a+b for a,b in zip(self.pending_origin_delta,delta))
             # compose() is straight-alpha; feed exactly one premultiplication.
@@ -697,32 +708,108 @@ class WindowsPet(win.PigPet):
         left,bottom,width,height = 270,425,280,count*34+12
         top = bottom-height
         self.selector_rect = (left,top,left+width,bottom)
-        draw = ImageDraw.Draw(canvas)
+        self.selector_scroll = max(0,min(self.selector_scroll,max(0,len(roots)-6)))
+        cache_key = (preview, self.selector_scroll, self.store.selected, self.scale,
+            tuple(self.appearance.values.items()),
+            tuple((n.id,n.title,n.unread,None if preview else self.store.result_token(n)) for n in roots))
+        if cache_key == self.selector_cache_key:
+            layer,rect,rows,dismiss_rows = self.selector_cache
+            self.selector_rect, self.selector_rows = rect,list(rows)
+            self.selector_dismiss_rows = list(dismiss_rows)
+            canvas.alpha_composite(layer)
+            return
+        self._cancel_selector_dismiss()
+        self.selector_cache_key = cache_key
+        layer = Image.new('RGBA',canvas.size)
         background = Image.new('RGBA',canvas.size)
         ImageDraw.Draw(background).rounded_rectangle(self.selector_rect,12,fill=self.appearance.color('taskColor',(220,218,222,255)),outline=(245,242,245,255),width=1)
-        self.selector_scroll = min(self.selector_scroll,max(0,len(roots)-6))
         visible_roots = roots[self.selector_scroll:self.selector_scroll+6]
         for i,node in enumerate(visible_roots):
             if node.id and node.id == self.store.selected:
                 selected = Image.new('RGBA',canvas.size)
                 ImageDraw.Draw(selected).rounded_rectangle((left+6,top+6+i*34,left+width-6,top+40+i*34),7,fill=(245,240,246,235))
                 background.alpha_composite(selected)
-        canvas.alpha_composite(opacity(background,self.appearance.taskOpacity))
-        draw = ImageDraw.Draw(canvas)
+        layer.alpha_composite(opacity(background,self.appearance.taskOpacity))
+        draw = ImageDraw.Draw(layer)
         self.selector_rows = []
+        self.selector_dismiss_rows = []
         font = win.load_ui_font(14)
+        ascent,descent = font.getmetrics()
         if not roots:
             draw.text((left+18,top+12),'当前好像没有任务唔～',font=font,fill=self.appearance.color('taskTextColor',(95,89,96,255)))
         for i,node in enumerate(visible_roots):
             rect = (left+6,top+6+i*34,left+width-6,top+40+i*34)
+            baseline = round((rect[1]+rect[3])/2+(ascent-descent)/2)
+            # One baseline for every title, with the marker centred on the
+            # font's common ink band (not on a string-dependent text box).
+            ink_band = draw.textbbox((left+28,baseline),'Ag中文',font=font,anchor='ls')
+            center_y = (ink_band[1]+ink_band[3])/2
+            dot = (left+12,round(center_y-4),left+20,round(center_y-4)+8)
             if node.unread:
-                draw.ellipse((left+12,rect[1]+13,left+19,rect[1]+20),fill=(47,137,229,255))
-            title = node.title
+                draw.ellipse((dot[0],dot[1],dot[2]-1,dot[3]-1),fill=(47,137,229,255))
+            title = node.title.rstrip()
             while title and draw.textlength(title,font=font)>width-48:
-                title = title[:-2]+'…' if not title.endswith('…') else title[:-2]+'…'
-            draw.text((left+28,rect[1]+7),title,font=font,fill=self.appearance.color('taskTextColor',(78,72,80,255)))
+                title = title[:-2].rstrip()+'…'
+            origin = (left+28,baseline)
+            draw.text(origin,title,font=font,anchor='ls',fill=self.appearance.color('taskTextColor',(78,72,80,255)))
             if not preview:
                 self.selector_rows.append((rect,node.id))
+                token = self.store.result_token(node)
+                if node.unread and token is not None:
+                    text_rect = draw.textbbox(origin,title,font=font,anchor='ls')
+                    hit = union([dot,text_rect]) if title else dot
+                    hit = (max(rect[0],hit[0]),max(rect[1],hit[1]),min(rect[2],hit[2]),min(rect[3],hit[3]))
+                    self.selector_dismiss_rows.append((hit,node.id,token))
+        self.selector_cache = (layer,self.selector_rect,tuple(self.selector_rows),tuple(self.selector_dismiss_rows))
+        canvas.alpha_composite(layer)
+
+    def _selector_dismiss_hit(self, point):
+        if (not point or not self.selector_visible or self.preview_task or self.preview_dialog or
+                self.permission_request or self.update_notice or self.dragging or self.edge_placement or self.edge_transition):
+            return None
+        if not self._point_in_rect(point,self.selector_rect):
+            return None
+        if (not self.selector_cache_key or self.selector_cache_key[2] != self.store.selected or
+                self.selector_cache_key[3] != self.scale or
+                self.selector_cache_key[4] != tuple(self.appearance.values.items())):
+            return None
+        for rect,actor,token in self.selector_dismiss_rows:
+            node = self.store.nodes.get(actor)
+            if (rect[0] <= point[0] < rect[2] and rect[1] <= point[1] < rect[3] and node and node.unread and
+                    self.store.result_token(node) == token):
+                return actor,token
+        return None
+
+    def _cancel_selector_dismiss(self):
+        # Keep the gesture latch until button-up: even a cancelled panel
+        # gesture must consume WM_RBUTTONUP rather than open the pig menu.
+        self.selector_right_down = None
+
+    def _handle_right_button_down(self):
+        point = self._cursor_window_position()
+        self.selector_right_gesture = bool(point and
+            (self.selector_visible or self.preview_task) and self._point_in_rect(point,self.selector_rect))
+        self.selector_right_down = self._selector_dismiss_hit(point)
+        if self.selector_right_gesture:
+            win.user32.SetCapture(self.hwnd)
+
+    def _handle_right_button_up(self):
+        if not self.selector_right_gesture:
+            return False
+        pressed = self.selector_right_down
+        hit = self._selector_dismiss_hit(self._cursor_window_position())
+        self.selector_right_gesture = False
+        self._cancel_selector_dismiss()
+        win.user32.ReleaseCapture()
+        if pressed and hit == pressed:
+            try:
+                if self.store.dismiss_result(*pressed):
+                    self.store.reconcile(time.time())
+                    self._render_current()
+                    self._write_heartbeat(force=True)
+            except OSError:
+                win.user32.MessageBoxW(self.hwnd,'无法保存已读状态，请稍后重试。','GooglePiggy',0)
+        return True
 
     def _update_hover(self):
         if self.preview_task:
@@ -730,6 +817,7 @@ class WindowsPet(win.PigPet):
             return
         if self.update_notice or self.permission_request:
             self.selector_visible = False
+            self._cancel_selector_dismiss()
             return
         point = self._cursor_window_position()
         if point and self.edge_placement is None and not self.dragging:
@@ -745,6 +833,8 @@ class WindowsPet(win.PigPet):
                 self.selector_visible = False
         else:
             self.selector_visible = False
+        if not self.selector_visible:
+            self._cancel_selector_dismiss()
 
     def _dialog_surface(self, rect):
         return permission_surface(rect, self.appearance.dialogColor, self.appearance.dialogOpacity)
@@ -829,6 +919,7 @@ class WindowsPet(win.PigPet):
         return 0.0 # The reserved family must remain inside the work area.
 
     def _begin_edge_hide_if_needed(self):
+        self._cancel_selector_dismiss()
         self.hidden_tokens = self.store.work_tokens().copy()
         node = self.store.nodes.get(self.store.selected)
         self.hidden_family = node.id if node and (node.active or any(n.active for n in self.store.children(node.id,time.time()))) else ''
@@ -840,6 +931,7 @@ class WindowsPet(win.PigPet):
         return result
 
     def _begin_edge_reveal(self, play_reveal_animation):
+        self._cancel_selector_dismiss()
         if self.hidden_family and self.activity_requires_visible_pet:
             self.reveal_completion = self.hidden_family
         result = super()._begin_edge_reveal(play_reveal_animation)
@@ -888,6 +980,7 @@ class WindowsPet(win.PigPet):
         win.user32.ShowWindow(self.tail_hwnd,win.SW_SHOW)
 
     def _handle_left_button_down(self):
+        self._cancel_selector_dismiss()
         point = self._cursor_window_position()
         if point and (self._point_in_rect(point,self.preview_dialog_rect) or self._point_in_rect(point,self.preview_task_rect)):
             return
@@ -1050,6 +1143,18 @@ class WindowsPet(win.PigPet):
             pass
 
     def _wndproc(self,hwnd,message,wparam,lparam):
+        if hwnd == self.hwnd:
+            if message in (0x0204,0x0206): # WM_RBUTTONDOWN / WM_RBUTTONDBLCLK
+                self._handle_right_button_down()
+                return 0
+            if message == win.WM_RBUTTONUP and self._handle_right_button_up():
+                return 0
+            if message == win.WM_MOUSEMOVE and self.selector_right_gesture:
+                if self._selector_dismiss_hit(self._cursor_window_position()) != self.selector_right_down:
+                    self._cancel_selector_dismiss()
+                return 0
+            if message in (0x001F,0x0215,0x0008,0x02E0): # cancel mode, lost capture/focus, DPI
+                self._cancel_selector_dismiss()
         if hwnd == self.hwnd and message == ANIMATION_MESSAGE:
             if self.animation_timer:
                 # Sample the fixed deadline rather than OS delivery jitter.
@@ -1076,6 +1181,7 @@ class WindowsPet(win.PigPet):
                 self.animation_timer.close()
                 self.animation_timer = None
         if hwnd==self.hwnd and message==0x020A: # WM_MOUSEWHEEL
+            self._cancel_selector_dismiss()
             delta = ctypes.c_short((wparam>>16)&0xffff).value
             point = self._cursor_window_position()
             if self.permission_request and point and self._point_in_rect(point,self.permission_bubble_rect):

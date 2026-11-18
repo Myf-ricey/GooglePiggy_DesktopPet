@@ -1,5 +1,9 @@
 """Actor/turn state; transport and Codex observation are separate adapters."""
 from dataclasses import dataclass, field
+import json
+import math
+from pathlib import Path
+from codex_bridge import atomic_json
 
 ACTIVE = {'thinking','working','compacting','permission','interrupted'}
 BEGINS = {'UserPromptSubmit','SubagentStart','PreCompact','ResumeDetected'}
@@ -24,6 +28,7 @@ class Node:
     completion: float | None = None
     unread: bool = False
     result: bool = False
+    result_completed_at: float | None = None
     payload: dict = field(default_factory=dict)
     rollout: str = ''
     observation_expired: bool = False
@@ -31,10 +36,45 @@ class Node:
 
 
 class FamilyStore:
-    def __init__(self):
+    def __init__(self, receipts_path=None):
         self.nodes, self.seen = {}, set()
         self.selected = ''
         self.pending = None
+        self.receipts_path = Path(receipts_path) if receipts_path else None
+        self.dismissed_results = {}
+        if self.receipts_path:
+            try:
+                values = json.loads(self.receipts_path.read_text(encoding='utf-8'))
+                if isinstance(values, dict):
+                    self.dismissed_results = {actor: value for actor, value in values.items()
+                        if isinstance(value, dict) and isinstance(value.get('turn'), str)
+                        and type(value.get('completed_at')) in (int, float)
+                        and math.isfinite(value['completed_at'])}
+            except (OSError, ValueError):
+                pass
+
+    def result_token(self, node):
+        return (node.turn, node.result_completed_at) if node.result_completed_at is not None else None
+
+    def is_result_dismissed(self, node):
+        receipt = self.dismissed_results.get(node.id)
+        return bool(receipt and node.result_completed_at is not None and
+            ((node.turn and node.turn == receipt['turn']) or
+             receipt['completed_at'] >= node.result_completed_at))
+
+    def dismiss_result(self, actor, token):
+        node = self.nodes.get(actor)
+        if not node or node.parent or not node.unread or token is None or token != self.result_token(node):
+            return False
+        receipts = dict(self.dismissed_results)
+        receipts[actor] = dict(turn=node.turn, completed_at=node.result_completed_at)
+        # Commit before changing the live notification, so a failed write can
+        # be retried and never claims to survive a restart.
+        if self.receipts_path:
+            atomic_json(self.receipts_path, receipts)
+        self.dismissed_results = receipts
+        node.unread = False
+        return True
 
     def ingest(self, p, now):
         session, agent = p.get('session_id',''), p.get('agent_id','')
@@ -93,9 +133,11 @@ class FamilyStore:
         if event in {'Stop','SubagentStop','TaskCompleteFallback','SessionEnd','PostCompact'}:
             node.active, node.completion = False, now
         if event in {'Stop','TaskCompleteFallback'} and not node.parent:
-            node.unread, node.result = True, True
+            node.result_completed_at = now
+            node.unread, node.result = not self.is_result_dismissed(node), True
         if begins:
             node.active, node.completion, node.unread, node.result = True, None, False, False
+            node.result_completed_at = None
             if not node.parent:
                 self.pending = actor
         if not self.selected:
@@ -105,7 +147,9 @@ class FamilyStore:
     def children(self, actor, now):
         parent = self.nodes.get(actor)
         return sorted((n for n in self.nodes.values() if n.parent == actor and
-            not (n.status == 'interrupted' and parent and n.last_event < parent.turn_started) and
+            not (n.status == 'interrupted' and parent and
+                 (n.last_event < parent.turn_started or
+                  not parent.active and parent.completion is not None)) and
             (n.active or n.completion is not None and now-n.completion < 2.84)), key=lambda n:n.created)
 
     def roots(self, now):

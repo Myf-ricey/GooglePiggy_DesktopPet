@@ -21,7 +21,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Manifest validation failed.' }
     & $venvPython tools\smoke_test.py
     if ($LASTEXITCODE -ne 0) { throw 'Legacy geometry validation failed.' }
-    & $venvPython -m unittest tools.test_handoff_053 -q
+    & $venvPython -m unittest tools.test_handoff_053 tools.test_notifications tools.test_completed_family_visibility -q
     if ($LASTEXITCODE -ne 0) { throw 'Handoff validation failed.' }
     & $venvPython -m unittest tools.test_animation_assets tools.test_appearance tools.test_appearance_stability tools.test_appearance_startup tools.test_autostart tools.test_windows_edge_policy -q
     if ($LASTEXITCODE -ne 0) { throw 'Appearance validation failed.' }
@@ -52,9 +52,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Saved appearance cold-start validation failed.' }
 
     $releaseDir = Join-Path $projectDir 'dist\GifPigDesktopPet'
-    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.10
+    & $venvPython tools\prepare_windows_update.py $releaseDir --version 0.5.11
     if ($LASTEXITCODE -ne 0) { throw 'Update manifest generation failed.' }
-    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.10-windows-x64.zip'
+    $zipPath = Join-Path $projectDir 'dist\GooglePiggy-0.5.11-windows-x64.zip'
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath
     Write-Host "Release: $releaseDir"

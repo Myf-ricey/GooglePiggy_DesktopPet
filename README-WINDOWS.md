@@ -1,10 +1,10 @@
-# GooglePiggy Windows 0.5.10
+# GooglePiggy Windows 0.5.11
 
 支持 Windows 10/11 x64，便携版无需 Python。本次实机验收环境是 Windows 11 24H2、单屏、150% DPI。
 
 ## 下载与安装
 
-从 [Windows 0.5.10 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.10-windows) 下载 `GooglePiggy-0.5.10-windows-x64.zip`。完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。
+从 [Windows 0.5.11 Release](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/tag/v0.5.11-windows) 下载 `GooglePiggy-0.5.11-windows-x64.zip`。完整解压到准备长期保留的文件夹，例如 `D:\Apps\GooglePiggy`。
 
 首次双击 `pig_pet.exe` 会默认设置当前用户登录自启动；右键菜单可以关闭，以后启动、安装和更新保留该选择。开发／隔离测试不会设置自启动。在解压目录打开 PowerShell，运行安装器即可启用完整联动：
 
@@ -77,15 +77,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 
 - **桌宠可见但不联动**：确认已运行安装器、完成 `/hooks` 审核，并用新聊天测试；检查安装目录是否移动。
 - **找不到 Codex 命令**：使用安装器输出的桌面版内置 CLI 完整路径。
-- **完成后仍有任务行**：有未读结果时会保留任务行；点开对应任务后再观察。
+- **完成后仍有任务行**：未读结果带蓝点，右键蓝点或标题可以清除该次通知。仍在运行或等待权限的任务会继续显示。
 - **权限气泡没有出现**：先查看 Codex 是否发出了真实 `PermissionRequest`；部分确认只能在客户端处理。
 - **下载被系统拦截**：本版未签名，可对照 Release 的 `SHA256SUMS.txt` 核验下载文件；只运行你确认来源的程序。
 
 ## 验收范围
 
-本轮测试与证据见 [0.5.10 验收](releases/windows-0.5.10/ACCEPTANCE.md)。本机为 Windows 11、150% DPI、单屏。100/125/200% DPI 与负坐标采用离线渲染／几何测试，其他物理显示器尚未实测。
+本轮测试与证据见 [0.5.11 验收](https://github.com/Myf-ricey/GooglePiggy_DesktopPet/releases/download/v0.5.11-windows/ACCEPTANCE.md)。本机为 Windows 11、150% DPI、单屏。100/125/200% DPI 与负坐标采用离线渲染／几何测试，其他物理显示器尚未实测。
 
-运行中拖到边缘隐藏时，家庭保持不变，直到主任务成功且子任务全部结束才弹出并完整庆祝；点击尾巴可提前唤出。更新提示不打断该隐藏状态。已有更新入口的 Windows 用户可以在右键菜单中检查并安装 0.5.10。
+运行中拖到边缘隐藏时，家庭保持不变，直到主任务成功且子任务全部结束才弹出并完整庆祝；点击尾巴可提前唤出。更新提示不打断该隐藏状态。已有更新入口的 Windows 用户可以在右键菜单中检查并安装 0.5.11。
 
 ## 0.5.6 外观更新
 
@@ -112,3 +112,7 @@ Windows 0.5.6 已通过用户验收。现有 Windows 0.5.1 及以上版本可通
 ## 0.5.10 任务较多时更流畅
 
 桌宠在运行中优先读取 Windows 通知里指出的新任务记录。启动时会恢复历史，遇到读取失败会重试，系统通知中断时会补扫目录。
+
+## 0.5.11 任务通知
+
+右键蓝点或标题可将单条结果标为已读。相同结果重启后保持已读，同一聊天的下一轮完成会再次提醒。父任务结束且已读后，已中断的子任务不再使条目残留。
